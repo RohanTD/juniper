@@ -19,5 +19,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "react-native-reanimated": "4.3.1"
   }
 }
