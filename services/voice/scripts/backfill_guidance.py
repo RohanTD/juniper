@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from juniper_voice.config import Settings
 from juniper_voice.context_brain import ContextBrain
 from juniper_voice.guidance import GUIDANCE_WINDOW, generate_guidance
-from juniper_voice.llm.provider import AnthropicProvider
+from juniper_voice.llm.provider import AnthropicProvider, GroqProvider, RoutingProvider
 from juniper_voice.medplum import (
     MedplumClient,
     read_recent_note_texts,
@@ -113,8 +113,12 @@ async def main(argv: list[str]) -> int:
     if not (settings.medplum_base_url and settings.medplum_client_id):
         logger.error("MEDPLUM_BASE_URL and MEDPLUM_CLIENT_ID are required")
         return 1
-    if not settings.anthropic_api_key:
-        logger.error("ANTHROPIC_API_KEY is required — guidance is generated, not templated")
+    if not (settings.anthropic_api_key or settings.groq_api_key):
+        logger.error(
+            "An LLM key is required — guidance is generated, not templated. "
+            "Set ANTHROPIC_API_KEY (and/or GROQ_API_KEY) in services/voice/.env "
+            "or in the shell you run this from."
+        )
         return 1
 
     terminology = get_terminology()
@@ -123,7 +127,12 @@ async def main(argv: list[str]) -> int:
         settings.medplum_client_id,
         settings.medplum_client_secret or "",
     )
-    provider = AnthropicProvider(api_key=settings.anthropic_api_key)
+    # The same wiring create_app uses, so whichever key is configured works and
+    # the roster's per-role model choice is honoured here too.
+    provider = RoutingProvider(
+        anthropic=AnthropicProvider(api_key=settings.anthropic_api_key),
+        groq=GroqProvider(api_key=settings.groq_api_key) if settings.groq_api_key else None,
+    )
     brain = ContextBrain(
         settings.context_brain_path,
         preferences=PreferencesStore(settings.preferences_path),

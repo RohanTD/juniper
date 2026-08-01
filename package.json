@@ -15,7 +15,8 @@
     "dev:voice": "cd services/voice && ../../.venv/bin/python -m uvicorn juniper_voice.app:create_app --factory --reload --port 8000",
     "dev:onboarding": "npm run -w @juniper/onboarding start",
     "dev:family": "npm run -w @juniper/family start",
-    "medplum:check": "node medplum/scripts/check.mjs"
+    "medplum:check": "node medplum/scripts/check.mjs",
+    "guidance:backfill": "cd services/voice && ../../.venv/bin/python scripts/backfill_guidance.py"
   },
   "engines": {
     "node": ">=20"
