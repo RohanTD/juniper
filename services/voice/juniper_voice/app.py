@@ -22,6 +22,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 
@@ -140,14 +141,56 @@ def create_app(
         return {"status": "ok"}
 
     # -- preferences API (docs/CONTRACTS.md §1) ------------------------------
+    async def authorize_preferences(patient_id: str, request: Request) -> None:
+        """Authorize a preferences call for ONE patient.
+
+        Two callers, two mechanisms:
+
+        - The **service token** (onboarding, internal tooling) is a shared
+          secret with no patient scope. It is trusted for any patient.
+        - A **Medplum user token** (the family app, signed in as a caregiver)
+          is scoped by asking Medplum whether that user may read this Patient.
+          The caregiver AccessPolicy already restricts that to the patient
+          they are bound to, so entitlement stays derived from CareTeam
+          membership rather than duplicated here — the same principle the
+          access model rests on everywhere else.
+
+        This distinction matters: without it, handing the service token to a
+        caregiver-facing app would make it a master key, since the route is
+        keyed only on a path parameter. Any caregiver could read or rewrite
+        any patient's call windows and topics-to-avoid by editing the URL.
+        """
+        header = request.headers.get("authorization", "")
+        token = header[7:].strip() if header[:7].lower() == "bearer " else ""
+        if not token:
+            raise HTTPException(status_code=401, detail="missing bearer token")
+        if settings.api_token and hmac.compare_digest(token, settings.api_token):
+            return  # trusted service credential
+        if not settings.medplum_base_url:
+            raise HTTPException(status_code=401, detail="invalid bearer token")
+        # Delegate the entitlement question to Medplum, as that user.
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{settings.medplum_base_url.rstrip('/')}/fhir/R4/Patient/{patient_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+        except httpx.HTTPError:
+            raise HTTPException(status_code=503, detail="could not verify authorization")
+        if response.status_code == 200:
+            return
+        if response.status_code in (401, 403):
+            raise HTTPException(status_code=403, detail="not authorized for this patient")
+        raise HTTPException(status_code=403, detail="not authorized for this patient")
+
     @app.get("/patients/{patient_id}/preferences")
     async def get_preferences(patient_id: str, request: Request):
-        require_bearer(request, settings.api_token)
+        await authorize_preferences(patient_id, request)
         return JSONResponse(preferences.get(patient_id).model_dump(exclude_none=True))
 
     @app.put("/patients/{patient_id}/preferences")
     async def put_preferences(patient_id: str, request: Request):
-        require_bearer(request, settings.api_token)
+        await authorize_preferences(patient_id, request)
         body = await request.json()
         try:
             stored = preferences.put(patient_id, Preferences.model_validate(body))
