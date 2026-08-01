@@ -209,7 +209,12 @@ async def test_advisory_hook_feeds_the_chart_query(provider, make_controller):
 
     script_benign(provider)
     retrieval = FakeRetrieval(context=RETRIEVED)
-    controller = moss_controller(make_controller, retrieval)
+    # warmup_turns=0: this test is about the advisory reaching the retrieval
+    # query, not about conversational pacing. With the default warm-up the
+    # controller deliberately issues no advisory on an opening turn.
+    controller = moss_controller(
+        make_controller, retrieval, settings=ControllerSettings(warmup_turns=0)
+    )
     controller.standing_advisory = Advisory(
         domain="medication", priority="high", hook="she mentioned a new pharmacy", source="fourm"
     )
@@ -415,7 +420,12 @@ async def test_closing_probes_reach_the_closer(provider, make_controller, fake_c
     controller = moss_controller(
         make_controller,
         retrieval,
-        settings=ControllerSettings(fatigue_short_replies=1, fatigue_word_threshold=5),
+        # warmup_turns=0: on a real call fatigue is ignored during the warm-up
+        # (opening pleasantries are short by nature, not tired). This test
+        # exercises the closing path, not the warm-up.
+        settings=ControllerSettings(
+            warmup_turns=0, fatigue_short_replies=1, fatigue_word_threshold=5
+        ),
     )
     # Mobility is the one remaining gap — the manifest-driven probe targets it.
     for domain in ("what-matters", "medication", "mentation"):

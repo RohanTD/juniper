@@ -50,13 +50,25 @@ async def test_medication_advisory_becomes_required_intent(provider, make_contro
     assert controller.standing_advisory.domain == "medication"
     assert controller.standing_advisory.required is True
 
-    # ...and the Companion's prompt received it as REQUIRED.
+    # ...and the Companion's prompt received it as a non-optional instruction.
+    #
+    # The marker text changed (was "REQUIRED INTENT (must be acted on this
+    # turn)") because that command phrasing made the Companion yank the
+    # subject mid-sentence, audibly, on live calls. The MECHANISM is
+    # unchanged and still asserted above via .required — what this checks is
+    # that an escalated advisory still reaches the prompt with real
+    # insistence and without the "drop it if it doesn't fit" licence that
+    # non-escalated advisories carry.
     companion_requests = provider.requests_for("companion")
     required_prompts = [
-        r for r in companion_requests if "REQUIRED INTENT" in r.prompt_text()
+        r for r in companion_requests if "NEEDED THIS TURN" in r.prompt_text()
     ]
     assert required_prompts, "companion never received the required intent"
-    assert "medication" in required_prompts[-1].prompt_text()
+    final_prompt = required_prompts[-1].prompt_text()
+    # Named in human words, not as a raw domain slug.
+    assert "Medication" in final_prompt
+    # An escalated intent is never presented as optional.
+    assert "let it go this turn" not in final_prompt
 
     # Coverage was not silently abandoned: the domain is still tracked as
     # unfilled and the miss is on the record as an unanswered ask.

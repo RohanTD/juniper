@@ -27,6 +27,10 @@ class Settings:
     groq_api_key: str | None = None
     deepgram_api_key: str | None = None
     twilio_auth_token: str | None = None
+    # Needed to redirect a live call (leaving the pre-written voicemail via
+    # the Calls API), so this is now read by the app, not just used to
+    # configure the number's webhook by hand.
+    twilio_account_sid: str | None = None
     # Public host (scheme-less), used to build TwiML/Deepgram callback URLs
     public_host: str = "localhost:8000"
     # Medplum
@@ -73,9 +77,26 @@ class Settings:
     retrieval_state_path: str = "data/retrieval_state.json"
     # Models
     roster: ModelRoster = field(default_factory=ModelRoster)
-    # Deepgram voice/listen models
-    deepgram_listen_model: str = "nova-3"
-    deepgram_speak_model: str = "aura-2-asteria-en"
+    # Deepgram voice/listen models.
+    #
+    # listen: Flux is Deepgram's model built FOR voice agents — it is the only
+    # one exposing end-of-turn tuning, and "let them finish; don't cut them
+    # off" is not something a prompt can do (the Companion never sees pauses
+    # at all: transcript.render() drops timing entirely). nova-3 has no such
+    # control. Verified against the live socket: the Settings message accepts
+    # version="v2" + flux-general-en + numeric EOT params.
+    #
+    # speak: pitch is a TTS property, not something a prompt can change, so
+    # this is the only place "a natural adult pitch, moderate to low; never
+    # raise pitch to sound bright" can actually be honoured.
+    deepgram_listen_model: str = "flux-general-en"
+    deepgram_speak_model: str = "aura-2-phoebe-en"
+    # Higher than Deepgram's 0.7 default: require MORE confidence that the
+    # speaker is done before ending the turn, so a slower speaker gathering
+    # their thought is not cut off mid-sentence.
+    deepgram_eot_threshold: float = 0.85
+    # Longer than the 5000ms default, for the same reason.
+    deepgram_eot_timeout_ms: int = 8000
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -89,6 +110,7 @@ class Settings:
             groq_api_key=env.get("GROQ_API_KEY"),
             deepgram_api_key=env.get("DEEPGRAM_API_KEY"),
             twilio_auth_token=env.get("TWILIO_AUTH_TOKEN"),
+            twilio_account_sid=env.get("TWILIO_ACCOUNT_SID"),
             public_host=env.get("JUNIPER_PUBLIC_HOST", default.public_host),
             medplum_base_url=env.get("MEDPLUM_BASE_URL"),
             medplum_client_id=env.get("MEDPLUM_CLIENT_ID"),
@@ -139,5 +161,11 @@ class Settings:
             ),
             deepgram_speak_model=env.get(
                 "JUNIPER_DEEPGRAM_SPEAK_MODEL", default.deepgram_speak_model
+            ),
+            deepgram_eot_threshold=float(
+                env.get("JUNIPER_DEEPGRAM_EOT_THRESHOLD", default.deepgram_eot_threshold)
+            ),
+            deepgram_eot_timeout_ms=int(
+                env.get("JUNIPER_DEEPGRAM_EOT_TIMEOUT_MS", default.deepgram_eot_timeout_ms)
             ),
         )

@@ -8,7 +8,7 @@ never the clinical record: the post-call pass reads the *complete* transcript
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Iterable
 
 PATIENT = "patient"
@@ -41,6 +41,21 @@ class TranscriptBuffer:
         )
         self._entries.append(entry)
         return entry
+
+    def replace_last(self, speaker: str, text: str) -> TranscriptEntry:
+        """Correct the most recent entry from ``speaker`` in place.
+
+        Used only when speech-to-text revises a turn it already emitted: the
+        better transcription replaces the worse one rather than being appended
+        as a second thing the patient said. Falls back to appending when there
+        is no matching entry to correct.
+        """
+        for position in range(len(self._entries) - 1, -1, -1):
+            if self._entries[position].speaker == speaker:
+                corrected = replace(self._entries[position], text=text)
+                self._entries[position] = corrected
+                return corrected
+        return self.append(speaker, text)
 
     @property
     def entries(self) -> tuple[TranscriptEntry, ...]:

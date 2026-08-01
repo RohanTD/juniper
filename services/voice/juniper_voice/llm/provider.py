@@ -81,7 +81,17 @@ class ModelRoster:
     # 8/8 at 294ms. Urgency runs in PARALLEL with the Companion, so its cost
     # is hidden entirely; compassion adds ~233ms sequentially. The ~60ms 8b
     # would save is not worth a filter that misses an anticoagulant stop.
-    companion: str = "llama-3.3-70b-versatile"
+    #
+    # THE COMPANION IS THE EXCEPTION, and the reason is instruction-following,
+    # not speed. Every quality mechanism in this architecture is expressed as
+    # an instruction — the persona, the advisory, the gatekeeper script — and
+    # llama-3.3-70b demonstrably ignores them on live calls: it introduced
+    # itself as "Juniper" instead of June, invented a "recorded for quality and
+    # training purposes" notice that appears nowhere in this codebase, and
+    # comma-spliced its way through turns the persona explicitly forbids. The
+    # same prompts on a Claude model produce clean output (scripts/ab_persona.py).
+    # ~1.6s/turn from Haiku beats ~0.4s of text nobody wants the patient to hear.
+    companion: str = "claude-haiku-4-5-20251001"
     compassion: str = "llama-3.3-70b-versatile"
     urgency: str = "llama-3.3-70b-versatile"
     advisor: str = "llama-3.3-70b-versatile"  # 4M and Closer, slow loop

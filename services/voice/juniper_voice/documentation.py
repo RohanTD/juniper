@@ -164,7 +164,33 @@ async def run_post_call(
 ) -> PostCallResult:
     """The whole post-call pipeline: drain slow-loop work, generate documents
     from the full transcript, write the contracted FHIR resources, then update
-    the Context Brain's experiential tier."""
+    the Context Brain's experiential tier.
+
+    Does nothing at all when the patient never actually engaged. A call that
+    reached voicemail, a wrong number, or a refusal is a *contact attempt*,
+    not a clinical encounter, and documenting it was actively harmful on three
+    counts, all observed live: it burned ~2,900 Opus tokens writing a note
+    about a conversation that never happened; it wrote 7 FHIR resources into
+    the patient's chart per missed call (enough noise that the documentation
+    model started citing "prior repeated same-day check-in encounters" as a
+    clinical observation); and it produced a *family summary* — a document a
+    caregiver can open — describing a visit that did not occur.
+    """
+    if not controller.patient_engaged:
+        logger.info(
+            "no patient contact on %s (phase=%s); skipping documentation entirely",
+            controller.call_id,
+            controller.phase.value,
+        )
+        # The transcript is still returned (the attempt is real, and the
+        # caller may log it) — it is simply never written to the chart.
+        return PostCallResult(
+            note_text="",
+            family_summary_text=None,
+            transcript_text=controller.transcript.render(),
+            write_result=None,
+        )
+
     await controller.drain_background()
 
     transcript_text = controller.transcript.render()

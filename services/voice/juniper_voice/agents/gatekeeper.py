@@ -3,8 +3,14 @@ conversational agent engages.
 
 Voicemail, a confused patient, and a family member answering are all common
 and get explicit handling paths.  The FHIR Consent gate ran before dialing
-(medplum.py); this stage verifies *who answered* and confirms recording
-verbally before the Companion proper engages.
+(medplum.py) and already requires the call-recording provision, so this stage
+verifies *who answered* and nothing more — it no longer re-confirms recording
+verbally, which was redundant with the consent captured at onboarding and made
+the opening exchange read like a form.
+
+NOTE for deployment: some two-party-consent jurisdictions require a spoken
+recording notice on the call itself, which written consent does not satisfy.
+Confirm before real patients; restore a notice here if required.
 """
 
 from __future__ import annotations
@@ -37,11 +43,20 @@ TAG = "gatekeeper"
 # classifier still runs on every patient utterance, scripted turn or not.
 # ---------------------------------------------------------------------------
 
-GREETING_TEMPLATE = "Hi, this is Juniper checking in. Is this {name}?"
-GREETING_NO_NAME = "Hi, this is Juniper calling for a routine check-in. Who am I speaking with?"
-CONFIRMED_REPLY = (
-    "Great! Just so you know, this call is recorded. Do you have a few minutes to chat?"
+# Left by TwiML <Say> when Twilio's answering-machine detection says a machine
+# picked up. No LLM, no Deepgram agent session, no transcript — the previous
+# behaviour was to let the Companion converse with the voicemail menu, which
+# cost three gatekeeper calls plus a full Opus documentation pass per missed
+# call. Deliberately contains NO health details: a voicemail can be heard by
+# anyone in the household.
+VOICEMAIL_MESSAGE = (
+    "Hello, it's June from Juniper calling for your check-in. "
+    "Sorry I missed you. I'll try again soon. Take care."
 )
+
+GREETING_TEMPLATE = "Hi {name}, it's June from Juniper. How are you doing today?"
+GREETING_NO_NAME = "Hello, it's June from Juniper calling for a check-in. Who am I speaking with?"
+CONFIRMED_REPLY = "Is this a good time to check in on how you're doing?"
 
 _FILLERS = frozenset({"uh", "um", "oh", "well", "hi", "hello", "hey", "why"})
 _YES_SINGLE = frozenset({"yes", "yeah", "yep", "yup", "speaking", "correct", "indeed"})
@@ -63,6 +78,31 @@ _YES_PHRASES = frozenset(
         "yes sir",
     }
 )
+
+# The greeting asks "How are you doing today?", so the reply that proves a
+# cooperative patient is on the line is a WELLBEING answer, not a confirmation
+# of identity. Keeping only the identity matchers after the greeting changed
+# meant the natural answer — "I'm doing good, how are you?" — never matched,
+# and every single call was routed through the gatekeeper LLM instead.
+_WELLBEING = frozenset(
+    {
+        "good", "fine", "well", "great", "okay", "ok", "alright", "right",
+        "decent", "wonderful", "lovely", "grand", "tired", "so", "bad",
+        "hanging", "surviving", "managing", "better",
+    }
+)
+# Anything suggesting we have NOT reached an oriented patient. Conservative on
+# purpose: these route to the LLM, which is exactly what it is for.
+_NOT_THE_PATIENT = (
+    "who is this", "who's this", "whos this", "who am i speaking",
+    "wrong number", "not here", "isn't here", "isnt here", "he's not",
+    "she's not", "take a message", "leave a message", "after the tone",
+    "after the beep", "not available", "unavailable", "hold on", "hang on",
+    "stop calling", "don't call", "dont call", "remove me", "not interested",
+    "say that again", "pardon", "come again", "speak up", "can't hear",
+    "cant hear", "what was that", "this is a recording",
+)
+_MAX_FAST_PATH_WORDS = 12
 
 
 def scripted_greeting(patient_name: str, preferred_name: str | None) -> str:
@@ -89,15 +129,50 @@ def is_clear_identity_yes(text: str) -> bool:
         return words[0] in _YES_SINGLE
     return normalized in _YES_PHRASES
 
-_SYSTEM = """You handle the very first moments of an automated wellbeing call to an elderly patient
-named {patient_name}{preferred}. Decide who answered and produce the next thing to say.
+
+def is_cooperative_answer(text: str) -> bool:
+    """Does this answer to the greeting show an oriented patient on the line?
+
+    This must stay paired with GREETING_TEMPLATE: it recognises answers to the
+    question the greeting actually asks. A hit skips the gatekeeper LLM, which
+    is both the slowest component of the opening and — as observed live — the
+    one most prone to improvising an identity-and-consent monologue nobody
+    asked for. Urgency still classifies the utterance either way, so a "not
+    great, my chest hurts" that lands here is never missed.
+    """
+    if is_clear_identity_yes(text):
+        return True
+    lowered = " ".join(text.lower().split())
+    if any(marker in lowered for marker in _NOT_THE_PATIENT):
+        return False
+    words = re.sub(r"[^a-z' ]", " ", lowered).split()
+    while words and words[0] in _FILLERS:
+        words = words[1:]
+    # A long reply carries more than an answer to "how are you" — let the LLM
+    # read it. Short and cooperative is the only thing that fast-paths.
+    if not words or len(words) > _MAX_FAST_PATH_WORDS:
+        return False
+    return any(word in _WELLBEING for word in words)
+
+_SYSTEM = """You are June, a phone companion calling from Juniper. Your name is June; Juniper is
+the service you call on behalf of. Never introduce yourself as "Juniper".
+
+You handle the very first moments of a wellbeing call to an elderly patient named
+{patient_name}{preferred}. You have ALREADY said: "Hi, it's June from Juniper. How are you
+doing today?" — so do not greet them a second time. Decide who answered and produce the
+next thing to say.
+
+Your reply is one or two short spoken sentences. Never mention recording, quality, training,
+or monitoring: consent was captured at onboarding and raising it here reads as a script.
+Never ask them to verify their identity like a call centre.
 
 Outcomes (choose exactly one):
 - "patient_confirmed": the patient themselves answered and seems oriented; your reply should
-  greet them by name, remind them this call is recorded, confirm that's okay, and lead into
-  the visit.
+  respond briefly to what they just said and ask whether now is a good time to talk. Nothing
+  else — do not open a health topic yet.
 - "voicemail": an answering machine or voicemail greeting; your reply is a brief, warm
-  message saying Juniper called to check in and will try again — leave NO health details.
+  message saying June from Juniper called to check in and will try again — leave NO health
+  details.
 - "family_member": someone else (spouse, child, aide) answered; your reply should kindly
   ask whether {patient_name} is available to come to the phone.
 - "confused": the person seems to be the patient but is confused about who is calling;
