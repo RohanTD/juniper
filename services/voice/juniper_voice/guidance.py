@@ -73,12 +73,64 @@ GUIDANCE_WINDOW = 8
 #:
 #: Read this as the feature's actual specification: if a suggestion does not
 #: fit one of these, Juniper does not make it.
+#:
+#: **Every kind is one of IHI's ambulatory "Act On" actions**, restricted to
+#: those a family member can legitimately carry out (IHI, *Guide to Using the
+#: 4Ms in the Care of Older Adults*, July 2020, Table 5 and Appendix D). That
+#: is not decoration — it is why the list stops where it does. The ambulatory
+#: Act On column also contains "deprescribe and dose-adjust high-risk
+#: medications", "refer for further evaluation", "prescribe antidepressant"
+#: and "refer to PT". Those are clinician actions, so they have no kind here
+#: and cannot be expressed. The vocabulary encodes who is allowed to do what.
 ALLOWED_KINDS: dict[str, str] = {
-    "companionship": "Spend time together — a visit, a call, a shared meal.",
-    "physical-activity": "Encourage gentle movement the patient already can do.",
-    "home-safety": "Change something about the home or its lighting or clutter.",
-    "routine-support": "Help an existing routine happen — a reminder, a lift, a shopping trip.",
+    # IHI Mobility, Act On: "Identify and set a daily mobility goal with older
+    # adult that supports What Matters; review and support progress toward the
+    # goal." The single most family-actionable item in the whole guide.
+    "physical-activity": (
+        "Support a daily movement goal the patient already can manage — and one that "
+        "serves something they care about."
+    ),
+    # IHI Mobility, Act On: "Ensure safe home environment for mobility",
+    # grounded in the CDC STEADI home fall-prevention checklist.
+    "home-safety": "Remove a hazard at home — lighting, loose rugs, a handrail, clutter on stairs.",
+    # IHI Mentation/Depression, Tips: "Recognize social isolation as a risk
+    # factor for depression and identify community-based resources that
+    # support social connections."
+    "companionship": "Spend time together — a visit, a call, a shared meal, a shared outing.",
+    # IHI Medication + Dementia, Act On: "Educate older adult and family or
+    # other caregivers"; Dementia also "refer to community organization for
+    # education and/or support". Practical support for a routine that exists —
+    # never a change to what is prescribed.
+    "routine-support": (
+        "Help an existing routine actually happen — a reminder, a lift, a shopping trip, "
+        "picking up a repeat prescription."
+    ),
+    # The escape hatch. Everything clinical in IHI's Act On column belongs to
+    # a clinician, so a worry travels to them rather than becoming advice.
     "raise-with-care-team": "Bring something to the attention of the clinicians.",
+}
+
+#: IHI's own aim for each M, in the family app's language.
+#:
+#: Kept here because the guidance prompt needs the *aims*, not the labels: the
+#: model has to know that Mobility means "moves safely every day to maintain
+#: function and do What Matters" — mobility in service of What Matters — or it
+#: produces exercise advice detached from anything the patient cares about.
+FOURM_AIMS: dict[str, str] = {
+    "what-matters": (
+        "The specific health outcome goals and care preferences that matter to this person. "
+        "IHI is explicit that these are activities, not abstractions: babysitting a "
+        "grandchild, walking with friends in the morning, continuing to work as a teacher."
+    ),
+    "medication": (
+        "Whether medication is getting in the way of What Matters, Mobility or Mentation. "
+        "Family can support a routine; only a clinician may change what is prescribed."
+    ),
+    "mentation": "Mood, memory and orientation — dementia, depression and delirium.",
+    "mobility": (
+        "Moving safely every day in order to maintain function AND do What Matters. "
+        "Mobility is never a goal in itself here; it is what makes the rest possible."
+    ),
 }
 
 #: Fixed copy for the escape hatch, so the wording of "talk to a clinician"
@@ -264,6 +316,21 @@ came up on their recent check-in calls into a few things they could actually do.
 You are writing for a son or daughter, not for a clinician. They are not \
 medically trained and cannot act on medical instructions.
 
+You are working within the 4Ms framework of Age-Friendly Health Systems (IHI / \
+The John A. Hartford Foundation). Two of its principles govern everything you \
+write:
+
+1. Organize around the older adult's WELLNESS AND STRENGTHS, not their disease \
+or their loss of function. IHI is explicit about this, and it is also simply \
+what a family member can act on.
+2. What Matters comes first, and the other three serve it. Mobility, Mentation \
+and Medication are worth raising insofar as they let this person do more of \
+what they actually care about. "Walk more" is a chore; "a walk to the rose \
+garden she mentioned" is What Matters.
+
+The domains:
+{aims}
+
 Rules:
 - Every suggestion must be one of exactly these kinds:
 {kinds}
@@ -349,7 +416,10 @@ async def generate_guidance(
         )
 
     kinds = "\n".join(f"  - {kind}: {why}" for kind, why in ALLOWED_KINDS.items())
-    system = GUIDANCE_SYSTEM_PROMPT.format(kinds=kinds, min_calls=MIN_CALLS_FOR_PATTERN)
+    aims = "\n".join(f"  - {domain}: {aim}" for domain, aim in FOURM_AIMS.items())
+    system = GUIDANCE_SYSTEM_PROMPT.format(
+        kinds=kinds, aims=aims, min_calls=MIN_CALLS_FOR_PATTERN
+    )
     prompt = build_guidance_prompt(findings)
     if interests:
         # From onboarding. This is what turns a generic suggestion into one a

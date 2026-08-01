@@ -36,7 +36,7 @@ import { openAlerts, useAlerts } from '../src/data/alerts';
 import { careContacts } from '../src/data/careteam';
 import { useCheckIns } from '../src/data/checkins';
 import { useGuidance } from '../src/data/guidance';
-import { patientFirstName, useMonitoredPatient } from '../src/data/patient';
+import { patientFirstName as firstNameOf, useMonitoredPatient } from '../src/data/patient';
 import { usePreferences } from '../src/data/preferences';
 import { describeNextCall, nextCall, nextCallSummary } from '../src/data/schedule';
 import { overallStatus, latestCheckInDate, unseenAlerts } from '../src/data/status';
@@ -70,7 +70,7 @@ const INLINE_ALERTS = 3;
 
 export default function Dashboard() {
   const theme = useTheme();
-  const { patientRef, patient, signedIn, canChoosePatient, choosePatient } =
+  const { patientRef, patient, signedIn, profileKind, canChoosePatient, choosePatient } =
     useMonitoredPatient();
   const patientId = patientRef?.split('/')[1];
   const checkIns = useCheckIns(patientRef);
@@ -81,6 +81,26 @@ export default function Dashboard() {
 
   if (!signedIn) {
     return <Redirect href="/sign-in" />;
+  }
+
+  // A patient signed into the CAREGIVER app, looking at their own record.
+  //
+  // This is not the app's audience, and the failure is silent: every query
+  // succeeds, returns nothing, and the dashboard renders in full and empty.
+  // It is indistinguishable from a patient who has never been called, and it
+  // cost real debugging time to tell the two apart — the only visible symptom
+  // was a 403 on the alert Subscription, which their AccessPolicy correctly
+  // denies. Say it plainly instead.
+  if (profileKind === 'patient') {
+    return (
+      <Screen>
+        <TopBar />
+        <EmptyState
+          title="This is the family view"
+          body={`You're signed in as ${firstNameOf(patient)}, the patient. This app shows a caregiver what has been happening on someone else's check-in calls, so signed in as yourself there is nothing here to follow. If you meant to review your own setup, use the Juniper setup link instead.`}
+        />
+      </Screen>
+    );
   }
 
   // Staff sign-in with nothing picked yet. Every hook above treats an absent
@@ -103,7 +123,7 @@ export default function Dashboard() {
     );
   }
 
-  const firstName = patientFirstName(patient);
+  const firstName = firstNameOf(patient);
   const encounters = checkIns.encounters ?? [];
   const open = openAlerts(alerts.tasks);
   const unseen = unseenAlerts(open, acks.isAcknowledged);

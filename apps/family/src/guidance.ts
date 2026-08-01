@@ -38,18 +38,32 @@ export interface GuidanceState {
   error: boolean;
 }
 
-/** Plain-language label per 4M domain, for the card's eyebrow. */
+/**
+ * Plain-language label per 4M domain, for the card's eyebrow.
+ *
+ * The 4Ms are IHI's framework (Age-Friendly Health Systems), and their names
+ * are written for clinicians: "Mentation" is not a word a daughter uses. These
+ * are the same four domains in the language of the person reading this screen —
+ * which is also IHI's own instruction, since the guide is explicit that the 4Ms
+ * should organize care around "the older adult's wellness and strengths rather
+ * than solely on disease".
+ */
 export const DOMAIN_LABELS: Record<string, string> = {
-  'what-matters': 'What matters to them',
+  // IHI: "specific health outcome goals and care preferences" — and the guide
+  // is emphatic that these are *activities*: babysitting a grandchild, walking
+  // with friends in the morning. Hence "wants to keep doing", not "goals".
+  'what-matters': 'What they want to keep doing',
   medication: 'Medication',
   mentation: 'Mood and memory',
-  mobility: 'Getting around',
+  // IHI's Mobility aim is "moves safely every day to maintain function AND do
+  // What Matters" — mobility in service of the rest, never for its own sake.
+  mobility: 'Getting about safely',
 };
 
 /** A short verb phrase per kind, so a caregiver can scan the list. */
 export const KIND_LABELS: Record<SuggestionKind, string> = {
   companionship: 'Spend time',
-  'physical-activity': 'Get moving',
+  'physical-activity': 'Keep moving',
   'home-safety': 'At home',
   'routine-support': 'Lend a hand',
   'raise-with-care-team': 'Worth mentioning',
