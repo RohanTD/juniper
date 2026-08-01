@@ -26,6 +26,8 @@ caregiver policy's criteria.
 | `resources/client-application-voice.json` | ClientApplication template for the voice service. No secret committed. |
 | `seed/seed-bundle.json` | Margaret "Peggy" Alvarez — fully populated test patient (30-entry transaction). |
 | `seed/seed-bundle-second-patient.json` | Harold "Hal" Nakamura — thin second patient whose Consent withholds family-sharing. Exists to prove caregiver isolation and consent gating. |
+| `seed/seed-preferences.json` | App-level preferences (call windows, topics, interests) for the seeded patients, keyed by MRN. Not FHIR — the voice service's own store. |
+| `scripts/seed-preferences.mjs` | Resolves seeded patients by MRN and writes their preferences. Run by `apply.sh`; `--api` writes through the running service, `--file` writes the JSON store directly. |
 | `scripts/generate-codesystems.mjs` | terminology.json → codesystem files. Deterministic, idempotent. |
 | `scripts/apply.sh` | Applies everything to a live project. Idempotent (conditional updates/creates). |
 | `scripts/check.mjs` | Static integrity checks, no network. Run in CI. |

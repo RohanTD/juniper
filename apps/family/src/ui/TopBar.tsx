@@ -25,6 +25,7 @@ const LINKS = [
   { href: '/checkins', label: 'Check-ins' },
   { href: '/alerts', label: 'Alerts' },
   { href: '/preferences', label: 'Call settings' },
+  { href: '/account', label: 'Your account' },
 ] as const;
 
 export function TopBar() {

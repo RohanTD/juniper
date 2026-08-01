@@ -1,0 +1,83 @@
+{
+  "_comment": [
+    "App-level preferences for the seeded patients (docs/CONTRACTS.md §1).",
+    "",
+    "WHY THIS FILE EXISTS: apply.sh seeds FHIR, and nothing seeded the voice",
+    "service's own store — so a seeded demo patient had a full chart and no",
+    "call windows at all. The family dashboard's 'next call' card and the",
+    "call-settings screen both read from here, so both rendered empty for",
+    "every seeded patient, which looks like a broken feature rather than",
+    "absent data. Onboarding is otherwise the only thing that ever writes",
+    "this store, and a seeded patient never goes through onboarding.",
+    "",
+    "Keyed by Juniper MRN rather than by Medplum id: ids are assigned per",
+    "project and differ in every environment, so seed-preferences.mjs looks",
+    "each patient up by MRN and writes under the real id.",
+    "",
+    "Timezones are the patients' own (Maryland), NOT the operator's — the",
+    "family app renders call windows in the patient's zone precisely so a",
+    "daughter in California sees her mother's Maryland morning."
+  ],
+  "byMrn": {
+    "JUN-0001": {
+      "callWindows": [
+        {
+          "days": ["mon", "tue", "wed", "thu", "fri"],
+          "start": "09:30",
+          "end": "11:30",
+          "timezone": "America/New_York"
+        }
+      ],
+      "topicsToAvoid": ["her late husband Robert"],
+      "interests": ["Gardening", "Grandchildren", "Crosswords", "Old films"],
+      "completedBy": { "role": "patient" },
+      "enrollment": {
+        "legalName": { "given": "Margaret", "family": "Alvarez" },
+        "preferredName": "Peggy",
+        "birthDate": "1946-03-14",
+        "phone": "+1-301-555-0142",
+        "language": { "code": "en", "label": "English" }
+      }
+    },
+    "JUN-0002": {
+      "callWindows": [
+        {
+          "days": ["tue", "thu"],
+          "start": "14:00",
+          "end": "16:00",
+          "timezone": "America/New_York"
+        }
+      ],
+      "topicsToAvoid": [],
+      "interests": ["Baseball", "Fishing", "Jazz"],
+      "completedBy": { "role": "proxy", "name": "Kenji Nakamura", "relationship": "son" },
+      "enrollment": {
+        "legalName": { "given": "Harold", "family": "Nakamura" },
+        "preferredName": "Hal",
+        "birthDate": "1943-11-02",
+        "phone": "+1-410-555-0173",
+        "language": { "code": "en", "label": "English" }
+      }
+    },
+    "JUN-0003": {
+      "callWindows": [
+        {
+          "days": ["mon", "wed", "fri"],
+          "start": "10:00",
+          "end": "12:00",
+          "timezone": "America/New_York"
+        }
+      ],
+      "topicsToAvoid": [],
+      "interests": ["Woodworking", "Church", "Card games"],
+      "completedBy": { "role": "patient" },
+      "enrollment": {
+        "legalName": { "given": "Robert", "family": "Whitfield" },
+        "preferredName": "Bob",
+        "birthDate": "1951-09-22",
+        "phone": "+1-301-555-0164",
+        "language": { "code": "en", "label": "English" }
+      }
+    }
+  }
+}

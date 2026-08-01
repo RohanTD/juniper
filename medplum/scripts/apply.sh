@@ -163,6 +163,20 @@ for f in "$SEED"/seed-bundle*.json; do
   '
 done
 
+# ------------------------------------------- app-level preference store
+# FHIR is not the whole patient. Call windows, topics-to-avoid and interests
+# have no FHIR home and live in the voice service's own store, which nothing
+# here seeds — so a seeded patient used to have a full chart and no call
+# schedule at all, and the family dashboard's next-call card and call-settings
+# screen both rendered empty. Onboarding is otherwise the only writer, and a
+# seeded patient never goes through onboarding.
+say "Seeding app-level preferences for the seeded patients"
+if MEDPLUM_BASE_URL="$BASE" node "$HERE/seed-preferences.mjs" --file; then
+  :
+else
+  echo "    (skipped — see medplum/scripts/seed-preferences.mjs)"
+fi
+
 say "Done. Set these in services/voice/.env — they are specific to THIS project:"
 cat <<EOF
     MEDPLUM_BASE_URL=$BASE
