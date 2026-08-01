@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" font-family="Outfit, Avenir Next, Segoe UI, Helvetica, Arial, sans-serif">
+  <title>How Juniper works</title>
+  <desc>Juniper calls an older adult on a regular schedule, holds a warm conversation
+  structured around the 4Ms of age-friendly care, and writes what it learns into the
+  medical record. Clinicians get a clinical note. Family get a plain-language summary
+  and suggestions. Nobody outside the care team sees the recording.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#85B2A5"/>
+    </marker>
+    <marker id="arrowDark" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2C6E5E"/>
+    </marker>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#01392E" flood-opacity="0.10"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" fill="#FAFAFA"/>
+
+  <!-- ============================== header ============================== -->
+  <text x="80" y="86" font-size="20" letter-spacing="4" fill="#599182" font-weight="500">JUNIPER</text>
+  <text x="80" y="146" font-size="46" fill="#111114" font-weight="600">A phone call that keeps an eye on Mom</text>
+  <text x="80" y="188" font-size="22" fill="#5A5A66">
+    Juniper calls on a schedule, has a real conversation, and turns it into something useful for everyone who cares for her.
+  </text>
+
+  <!-- ========================= 1. SETUP (once) ========================== -->
+  <g filter="url(#soft)">
+    <rect x="80" y="252" width="290" height="196" rx="20" fill="#FFFFFF" stroke="#EBEBED"/>
+  </g>
+  <rect x="80" y="252" width="290" height="6" rx="3" fill="#85B2A5"/>
+  <text x="112" y="300" font-size="14" letter-spacing="2.5" fill="#599182" font-weight="500">ONCE, AT THE START</text>
+  <text x="112" y="342" font-size="26" fill="#111114" font-weight="600">Setup on a phone</text>
+  <text x="112" y="378" font-size="18" fill="#5A5A66">Best times to call, what she</text>
+  <text x="112" y="404" font-size="18" fill="#5A5A66">enjoys, what to avoid, and</text>
+  <text x="112" y="430" font-size="18" fill="#5A5A66">her permission for all of it.</text>
+
+  <!-- ===================== 2. THE CALL (recurring) ====================== -->
+  <g filter="url(#soft)">
+    <rect x="452" y="252" width="360" height="404" rx="20" fill="#2C6E5E"/>
+  </g>
+  <text x="488" y="300" font-size="14" letter-spacing="2.5" fill="#B1D0C6" font-weight="500">EVERY FEW DAYS</text>
+  <text x="488" y="344" font-size="30" fill="#FFFFFF" font-weight="600">Juniper calls</text>
+
+  <text x="488" y="392" font-size="18" fill="#D7E8E3">One familiar voice, every time.</text>
+  <text x="488" y="418" font-size="18" fill="#D7E8E3">It already knows her name, her</text>
+  <text x="488" y="444" font-size="18" fill="#D7E8E3">roses and her grandchildren.</text>
+
+  <line x1="488" y1="478" x2="776" y2="478" stroke="#599182"/>
+  <text x="488" y="512" font-size="14" letter-spacing="2.5" fill="#B1D0C6" font-weight="500">WHILE THEY TALK, IT LISTENS FOR</text>
+  <text x="488" y="548" font-size="19" fill="#FFFFFF">What matters to her</text>
+  <text x="488" y="578" font-size="19" fill="#FFFFFF">How she is managing medication</text>
+  <text x="488" y="608" font-size="19" fill="#FFFFFF">Mood and memory</text>
+  <text x="488" y="638" font-size="19" fill="#FFFFFF">Getting about safely</text>
+
+  <!-- the patient, under the call -->
+  <g filter="url(#soft)">
+    <rect x="452" y="700" width="360" height="112" rx="20" fill="#FFFFFF" stroke="#EBEBED"/>
+  </g>
+  <text x="488" y="746" font-size="26" fill="#111114" font-weight="600">Margaret, 80</text>
+  <text x="488" y="782" font-size="18" fill="#5A5A66">Answers her own phone. No app to learn.</text>
+
+  <line x1="632" y1="700" x2="632" y2="660" stroke="#2C6E5E" stroke-width="2.5"
+        marker-start="url(#arrowDark)" marker-end="url(#arrowDark)"/>
+
+  <!-- ===================== 3. THE MEDICAL RECORD ======================= -->
+  <g filter="url(#soft)">
+    <rect x="894" y="252" width="290" height="196" rx="20" fill="#FFFFFF" stroke="#EBEBED"/>
+  </g>
+  <rect x="894" y="252" width="290" height="6" rx="3" fill="#2C6E5E"/>
+  <text x="926" y="300" font-size="14" letter-spacing="2.5" fill="#599182" font-weight="500">THE SINGLE SOURCE OF TRUTH</text>
+  <text x="926" y="342" font-size="26" fill="#111114" font-weight="600">Her medical record</text>
+  <text x="926" y="378" font-size="18" fill="#5A5A66">Everything written down in</text>
+  <text x="926" y="404" font-size="18" fill="#5A5A66">the same place her doctors</text>
+  <text x="926" y="430" font-size="18" fill="#5A5A66">already work.</text>
+
+  <!-- ==================== 4. WHO SEES WHAT ============================= -->
+  <text x="894" y="500" font-size="14" letter-spacing="2.5" fill="#599182" font-weight="500">AFTER EVERY CALL, TWO DIFFERENT THINGS ARE WRITTEN</text>
+
+  <!-- care team -->
+  <g filter="url(#soft)">
+    <rect x="894" y="552" width="290" height="260" rx="20" fill="#FFFFFF" stroke="#EBEBED"/>
+  </g>
+  <text x="926" y="600" font-size="24" fill="#111114" font-weight="600">The care team</text>
+  <text x="926" y="640" font-size="18" fill="#5A5A66">A clinical note, in their</text>
+  <text x="926" y="666" font-size="18" fill="#5A5A66">language, with the detail</text>
+  <text x="926" y="692" font-size="18" fill="#5A5A66">they need.</text>
+  <rect x="926" y="716" width="226" height="60" rx="12" fill="#FEF3C7"/>
+  <text x="946" y="742" font-size="16" fill="#78350F" font-weight="600">Anything urgent</text>
+  <text x="946" y="764" font-size="15" fill="#78350F">reaches them straight away.</text>
+
+  <!-- family -->
+  <g filter="url(#soft)">
+    <rect x="1230" y="552" width="290" height="260" rx="20" fill="#FFFFFF" stroke="#EBEBED"/>
+  </g>
+  <text x="1262" y="600" font-size="24" fill="#111114" font-weight="600">Her family</text>
+  <text x="1262" y="640" font-size="18" fill="#5A5A66">A short, plain-language</text>
+  <text x="1262" y="666" font-size="18" fill="#5A5A66">summary — plus ideas for</text>
+  <text x="1262" y="692" font-size="18" fill="#5A5A66">what they could do.</text>
+  <rect x="1262" y="716" width="226" height="60" rx="12" fill="#EDF6F3"/>
+  <text x="1282" y="742" font-size="16" fill="#07483B" font-weight="600">“Take her to the roses”</text>
+  <text x="1282" y="764" font-size="15" fill="#07483B">— never medical advice.</text>
+
+  <!-- family dashboard label -->
+  <g filter="url(#soft)">
+    <rect x="1230" y="252" width="290" height="196" rx="20" fill="#FFFFFF" stroke="#EBEBED"/>
+  </g>
+  <rect x="1230" y="252" width="290" height="6" rx="3" fill="#85B2A5"/>
+  <text x="1262" y="300" font-size="14" letter-spacing="2.5" fill="#599182" font-weight="500">ANY TIME</text>
+  <text x="1262" y="342" font-size="26" fill="#111114" font-weight="600">Family dashboard</text>
+  <text x="1262" y="378" font-size="18" fill="#5A5A66">How she's doing, when the</text>
+  <text x="1262" y="404" font-size="18" fill="#5A5A66">next call is, and anything</text>
+  <text x="1262" y="430" font-size="18" fill="#5A5A66">that needs them.</text>
+
+  <!-- ========================== connectors ============================= -->
+  <!-- setup -> call -->
+  <line x1="380" y1="350" x2="442" y2="350" stroke="#85B2A5" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <!-- call -> record -->
+  <line x1="822" y1="350" x2="884" y2="350" stroke="#85B2A5" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <!-- record -> care team -->
+  <line x1="1039" y1="516" x2="1039" y2="544" stroke="#85B2A5" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <!-- record -> dashboard -> family -->
+  <line x1="1194" y1="350" x2="1220" y2="350" stroke="#85B2A5" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="1375" y1="516" x2="1375" y2="544" stroke="#85B2A5" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- ======================= the privacy line ========================== -->
+  <rect x="80" y="828" width="1440" height="1" fill="#EBEBED"/>
+  <text x="80" y="866" font-size="18" fill="#5A5A66">
+    <tspan font-weight="600" fill="#111114">Her call, her rules.</tspan>
+    Nothing happens without her permission, and she can change her mind on any call.
+  </text>
+  <text x="80" y="892" font-size="18" fill="#5A5A66">
+    Her family never sees the recording or the clinical note — only the summary written for them.
+  </text>
+</svg>
