@@ -1,0 +1,25 @@
+{
+  "name": "@juniper/theme",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Juniper design system — the Thoracle theme system ported: token ramps, typography recipes, component recipes, accessible variant, WCAG utilities, ThemeProvider.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": [
+    "src",
+    "THEME_SYSTEM.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "react": "19.2.3",
+    "typescript": "~5.9.2",
+    "vitest": "~4.1.10"
+  }
+}

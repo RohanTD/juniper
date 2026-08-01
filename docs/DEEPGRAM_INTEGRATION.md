@@ -58,5 +58,14 @@ session's `think` stage calls back into this same service over HTTP.
 
 ## MCP note
 
-The repo configures a `deepgram-docs` MCP server (`.mcp.json`) for interactive doc lookup.
-It requires OAuth — authorize it via `/mcp` in an interactive Claude Code session.
+The repo configures a `deepgram-docs` MCP server (`.mcp.json`) for interactive doc lookup,
+run through Deepgram's own CLI:
+
+```bash
+uv tool install deepctl     # provides `dg` on PATH
+dg login                    # one-time auth
+```
+
+`.mcp.json` invokes `dg mcp`, which authenticates through the CLI's stored credentials.
+The hosted HTTP endpoint (`https://api.dx.deepgram.com/kapa/mcp`) is the alternative, but it
+requires an interactive OAuth flow that headless sessions cannot complete.
