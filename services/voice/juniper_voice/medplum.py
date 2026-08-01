@@ -1065,6 +1065,139 @@ def _document_reference(
     return resource
 
 
+async def read_recent_note_texts(
+    store: FHIRStore,
+    terminology: Terminology,
+    patient_id: str,
+    *,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    """Recent Juniper notes, with their text, newest first.
+
+    Only this service ever calls it: the caregiver AccessPolicy hides
+    ``juniper-note`` outright, so the family app could not assemble this even
+    if it wanted to.  That is exactly why guidance is generated here.
+
+    Runs post-call, off the turn's critical path — it is N+1 round trips by
+    construction (a search, then one Binary read each) and has no business
+    anywhere near the latency budget.
+    """
+    category = terminology.note_category("note")
+    documents = await store.search(
+        "DocumentReference",
+        {
+            "subject": f"Patient/{patient_id}",
+            "category": f"{category.system}|{category.code}",
+            "_sort": "-date",
+            "_count": str(limit),
+        },
+    )
+    out: list[dict[str, Any]] = []
+    for document in documents[:limit]:
+        url = ((document.get("content") or [{}])[0].get("attachment") or {}).get("url") or ""
+        text = ""
+        if url.startswith("Binary/"):
+            try:
+                binary = await store.read("Binary", url.split("/", 1)[1])
+                raw = binary.get("data")
+                if raw:
+                    text = base64.b64decode(raw).decode("utf-8", errors="replace")
+            except MedplumError:
+                # One unreadable note must not sink the whole pass; guidance is
+                # a nicety and degrades to "less evidence", never to a failure.
+                text = ""
+        if text:
+            out.append({"date": (document.get("date") or "")[:10], "text": text})
+    return out
+
+
+async def write_family_guidance(
+    store: FHIRStore,
+    terminology: Terminology,
+    *,
+    patient_id: str,
+    guidance_json: str,
+    date_iso: str,
+    device_ref: str,
+    organization_ref: str | None,
+) -> dict[str, str]:
+    """Write the family guidance document.
+
+    Two shape decisions worth stating:
+
+    * **No ``context.encounter``.**  Every other document this service writes
+      is about one call.  Guidance is about a *run* of calls — attaching it to
+      the most recent one would misdate it and make "everything from this call"
+      queries return something that is not from that call.
+    * **Replaces, rather than accumulating.**  Guidance is a current view, not
+      a history; a caregiver opening the dashboard must see one list, not
+      fourteen weekly ones stacked up. The previous document is superseded.
+
+    Stays inside the locked write surface: ``Binary`` + ``DocumentReference``
+    and nothing else.
+    """
+    binary_ref = f"urn:uuid:{uuid.uuid4()}"
+    doc_ref = f"urn:uuid:{uuid.uuid4()}"
+    guidance_coding = terminology.note_category("familyGuidance")
+    resource: dict[str, Any] = {
+        "resourceType": "DocumentReference",
+        "status": "current",
+        "docStatus": terminology.doc_status_initial,
+        "type": terminology.note_type.as_codeable_concept(),
+        "category": [guidance_coding.as_codeable_concept()],
+        "subject": {"reference": f"Patient/{patient_id}"},
+        "date": date_iso,
+        "author": [{"reference": device_ref}],
+        "content": [
+            {
+                "attachment": {
+                    "contentType": "application/json",
+                    "url": binary_ref,
+                    "title": "Juniper family guidance",
+                }
+            }
+        ],
+    }
+    if organization_ref:
+        resource["custodian"] = {"reference": organization_ref}
+
+    entries = [
+        {
+            "fullUrl": binary_ref,
+            "resource": {
+                "resourceType": "Binary",
+                "contentType": "application/json",
+                "securityContext": {"reference": doc_ref},
+                "data": base64.b64encode(guidance_json.encode("utf-8")).decode("ascii"),
+            },
+            "request": {"method": "POST", "url": "Binary"},
+        },
+        {
+            "fullUrl": doc_ref,
+            "resource": resource,
+            # Conditional update: one current guidance document per patient.
+            "request": {
+                "method": "PUT",
+                "url": (
+                    "DocumentReference?subject=Patient/"
+                    f"{patient_id}&category={guidance_coding.system}|{guidance_coding.code}"
+                ),
+            },
+        },
+    ]
+    response = await store.transaction(
+        {"resourceType": "Bundle", "type": "transaction", "entry": entries}
+    )
+    resolved = {
+        sent["fullUrl"]: received.get("resource") or {}
+        for sent, received in zip(entries, response.get("entry", []))
+    }
+    return {
+        "document_id": resolved[doc_ref].get("id", ""),
+        "binary_id": resolved[binary_ref].get("id", ""),
+    }
+
+
 async def write_post_call(
     store: FHIRStore,
     terminology: Terminology,

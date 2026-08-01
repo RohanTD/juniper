@@ -331,6 +331,30 @@ const caregiverPolicy = files.get(join(RESOURCES_DIR, 'access-policy-caregiver.j
     else fail(`caregiver policy: ${type} criteria must contain '${expected}'`);
   }
 
+  // The DocumentReference criteria is the single edit that could silently
+  // expose the clinical record to families, so assert the EXACT category set
+  // rather than "contains family-summary" — a permissive check would pass
+  // just as happily with juniper-note appended.
+  {
+    const entry = (caregiverPolicy?.resource ?? []).find(
+      (r) => r.resourceType === 'DocumentReference'
+    );
+    const allowed = new Set([note.codes.familySummary.code, note.codes.familyGuidance.code]);
+    const declared = [...(entry?.criteria ?? '').matchAll(/category=|,?[^|,&]+\|([^,&]+)/g)]
+      .map((m) => m[1])
+      .filter(Boolean);
+    const unexpected = declared.filter((code) => !allowed.has(code));
+    if (unexpected.length) {
+      fail(`caregiver policy: DocumentReference exposes unexpected categories: ${unexpected.join(', ')}`);
+    } else if (declared.length !== allowed.size) {
+      fail(
+        `caregiver policy: DocumentReference should expose exactly {${[...allowed].join(', ')}}, found {${declared.join(', ')}}`
+      );
+    } else {
+      ok(`DocumentReference exposes exactly {${[...allowed].join(', ')}}`);
+    }
+  }
+
   const raw = JSON.stringify(caregiverPolicy);
   for (const forbidden of [note.codes.note.code, note.codes.transcript.code]) {
     if (raw.includes(`|${forbidden}`) || raw.includes(`"${forbidden}"`)) {

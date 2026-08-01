@@ -35,6 +35,7 @@ import { useAcknowledgements, acknowledgedPhrase } from '../src/data/acknowledge
 import { openAlerts, useAlerts } from '../src/data/alerts';
 import { careContacts } from '../src/data/careteam';
 import { useCheckIns } from '../src/data/checkins';
+import { useGuidance } from '../src/data/guidance';
 import { patientFirstName, useMonitoredPatient } from '../src/data/patient';
 import { usePreferences } from '../src/data/preferences';
 import { describeNextCall, nextCall, nextCallSummary } from '../src/data/schedule';
@@ -50,6 +51,7 @@ import { AlertCard } from '../src/ui/AlertCard';
 import { Card } from '../src/ui/Card';
 import { CareTeamCard } from '../src/ui/CareTeamCard';
 import { EmptyState } from '../src/ui/EmptyState';
+import { GuidanceCard } from '../src/ui/GuidanceCard';
 import { Hero } from '../src/ui/Hero';
 import { Columns, TileRow } from '../src/ui/Layout';
 import { NextCallCard } from '../src/ui/NextCallCard';
@@ -75,6 +77,7 @@ export default function Dashboard() {
   const alerts = useAlerts(patientRef);
   const preferences = usePreferences(patientId);
   const acks = useAcknowledgements(patientId);
+  const guidance = useGuidance(patientRef);
 
   if (!signedIn) {
     return <Redirect href="/sign-in" />;
@@ -158,6 +161,11 @@ export default function Dashboard() {
   // ---- left column: what you read ----------------------------------------
   const main = (
     <View>
+        {/* Above the timeline on purpose. The timeline reports what happened;
+            this is the only part of the page that answers "so what do I do?",
+            and a caregiver who scrolls past it has been failed by the layout. */}
+        <GuidanceCard state={guidance} firstName={firstName} />
+
         <SectionHeader title="Recent check-ins" />
         {checkIns.loading ? (
           <ThemedText variant="body" color={theme.colors.text.secondary}>

@@ -18,6 +18,7 @@ gap can never be lost to model paraphrasing.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -26,8 +27,15 @@ from typing import Sequence
 from .context_brain import ContextBrain, chunk_transcript
 from .controller import ConversationController, UnresolvedGap
 from .escalation import Escalation
+from .guidance import GUIDANCE_WINDOW, generate_guidance
 from .llm.provider import LLMProvider, ModelRoster
-from .medplum import FHIRStore, PostCallWriteResult, write_post_call
+from .medplum import (
+    FHIRStore,
+    PostCallWriteResult,
+    read_recent_note_texts,
+    write_family_guidance,
+    write_post_call,
+)
 from .terminology import Terminology
 
 logger = logging.getLogger("juniper.documentation")
@@ -220,6 +228,45 @@ async def run_post_call(
             organization_ref=organization_ref,
             escalation_tasks=tasks,
         )
+
+    # Family guidance: what a relative could actually DO about what has been
+    # coming up. Deliberately after the contracted writes and wrapped in its
+    # own try — a caregiver's "here's an idea" card is the least important
+    # thing this pipeline produces, and it must never cost the clinical note.
+    #
+    # Consent-gated at generation, not at display (docs/PLAN.md): guidance
+    # produced and then withheld has still been written down, and "we made it
+    # but did not show you" is a different promise from "we did not make it".
+    if medplum is not None and controller.brief.consent.family_sharing:
+        try:
+            recent = await read_recent_note_texts(
+                medplum, terminology, controller.patient_id, limit=GUIDANCE_WINDOW
+            )
+            guidance = await generate_guidance(
+                provider,
+                findings=recent,
+                terminology=terminology,
+                model=roster.documentation,
+                family_sharing_consent=True,
+                interests=(
+                    context_brain.interests(controller.patient_id) if context_brain else ()
+                ),
+            )
+            for reason in guidance.rejected:
+                # Logged, never shown. A model drifting toward clinical advice
+                # should be visible to us and invisible to the family.
+                logger.info("guidance suggestion rejected: %s", reason)
+            await write_family_guidance(
+                medplum,
+                terminology,
+                patient_id=controller.patient_id,
+                guidance_json=json.dumps(guidance.as_dict()),
+                date_iso=call_end_iso or datetime.now(timezone.utc).isoformat(),
+                device_ref=device_ref,
+                organization_ref=organization_ref,
+            )
+        except Exception:  # noqa: BLE001 - guidance must not sink the pass
+            logger.exception("family guidance generation failed")
 
     if context_brain is not None:
         try:

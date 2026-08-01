@@ -274,6 +274,9 @@ evidence of a condition. If something worries you clinically, use the \
 calls. Set supportingCalls to the real number.
 - Quote what the patient actually said or reported. Never infer a mood or a \
 decline they did not describe.
+- Where the patient's own interests fit, use them. "Take her for a walk" is \
+generic; "she mentioned the rose garden — a walk there on Sunday" is a plan \
+someone will actually carry out.
 - At most 3 suggestions. Fewer is better. If nothing stands out, return an \
 empty list — a family that gets nothing this week is better served than one \
 given filler.
@@ -296,11 +299,21 @@ def build_guidance_prompt(findings: Sequence[Mapping[str, Any]]) -> str:
         date = call.get("date") or "unknown date"
         lines.append(f"Call {index} ({date}):")
         domains = call.get("domains") or {}
-        if not domains:
-            lines.append("  (nothing recorded)")
         for domain, detail in domains.items():
             lines.append(f"  {domain}: {json.dumps(detail, ensure_ascii=False)}")
+        # Until structured per-domain findings are persisted, the note text is
+        # the record of what was said. Accepting both keeps this function the
+        # single input shape when they land.
+        text = (call.get("text") or "").strip()
+        if text:
+            lines.append(_indent(text))
+        if not domains and not text:
+            lines.append("  (nothing recorded)")
     return "\n".join(lines)
+
+
+def _indent(text: str) -> str:
+    return "\n".join(f"  {line}" for line in text.splitlines())
 
 
 async def generate_guidance(
@@ -310,6 +323,7 @@ async def generate_guidance(
     terminology: Terminology,
     model: str,
     family_sharing_consent: bool,
+    interests: Sequence[str] = (),
 ) -> Guidance:
     """Produce family guidance from recent calls, or explain why not.
 
@@ -336,11 +350,21 @@ async def generate_guidance(
 
     kinds = "\n".join(f"  - {kind}: {why}" for kind, why in ALLOWED_KINDS.items())
     system = GUIDANCE_SYSTEM_PROMPT.format(kinds=kinds, min_calls=MIN_CALLS_FOR_PATTERN)
+    prompt = build_guidance_prompt(findings)
+    if interests:
+        # From onboarding. This is what turns a generic suggestion into one a
+        # family member will actually act on.
+        prompt = (
+            "Things they told us they enjoy: "
+            + ", ".join(interests)
+            + "\n\n"
+            + prompt
+        )
     response = await provider.complete(
         tag="guidance",
         model=model,
         system=system,
-        messages=[{"role": "user", "content": build_guidance_prompt(findings)}],
+        messages=[{"role": "user", "content": prompt}],
     )
     try:
         payload = json.loads(_strip_code_fence(response.text))
