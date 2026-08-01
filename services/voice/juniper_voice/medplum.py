@@ -45,6 +45,7 @@ class FHIRStore(Protocol):
     async def create(self, resource: Mapping[str, Any]) -> dict[str, Any]: ...
     async def transaction(self, bundle: Mapping[str, Any]) -> dict[str, Any]: ...
     async def read(self, resource_type: str, resource_id: str) -> dict[str, Any]: ...
+    async def read_binary(self, binary_id: str) -> str: ...
 
 
 class MedplumClient:
@@ -131,6 +132,18 @@ class MedplumClient:
     async def read(self, resource_type: str, resource_id: str) -> dict[str, Any]:
         response = await self._request("GET", f"{resource_type}/{resource_id}")
         return response.json()
+
+    async def read_binary(self, binary_id: str) -> str:
+        """Binary content as text.
+
+        ``GET /Binary/<id>`` does NOT return FHIR JSON — Medplum serves the
+        stored bytes with their own content type, so parsing the response as
+        JSON raises "Expecting value: line 1 column 1". Every other resource
+        read goes through :meth:`read`; this one cannot, and giving it its own
+        method is what stops the next caller assuming otherwise.
+        """
+        response = await self._request("GET", f"Binary/{binary_id}")
+        return response.text
 
 
 # ---------------------------------------------------------------------------
@@ -1122,11 +1135,8 @@ async def read_recent_note_texts(
         binary_id = binary_id_from_url(url)
         if binary_id:
             try:
-                binary = await store.read("Binary", binary_id)
-                raw = binary.get("data")
-                if raw:
-                    text = base64.b64decode(raw).decode("utf-8", errors="replace")
-            except MedplumError:
+                text = await store.read_binary(binary_id)
+            except (MedplumError, KeyError):
                 # One unreadable note must not sink the whole pass; guidance is
                 # a nicety and degrades to "less evidence", never to a failure.
                 text = ""

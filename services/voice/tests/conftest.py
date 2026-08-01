@@ -3,6 +3,7 @@ transcript fixture loader.  Everything runs offline — zero network."""
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any, Mapping
@@ -193,6 +194,17 @@ class FakeMedplum:
             "type": "transaction-response",
             "entry": response_entries,
         }
+
+    async def read_binary(self, binary_id: str) -> str:
+        """Binary reads return CONTENT, not FHIR JSON — the real server serves
+        the stored bytes with their own content type, and treating it like any
+        other resource read is what produced a JSON decode error in
+        production."""
+        for resource in self.resources.get("Binary", []):
+            if resource.get("id") == binary_id:
+                data = resource.get("data")
+                return base64.b64decode(data).decode("utf-8") if data else ""
+        raise KeyError(f"Binary/{binary_id} not seeded")
 
     async def read(self, resource_type: str, resource_id: str) -> dict[str, Any]:
         for resource in self.resources.get(resource_type, []):

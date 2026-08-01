@@ -205,3 +205,32 @@ async def test_the_binary_is_scoped_to_its_own_document(medplum, terminology):
     written = [b for b in binaries if b.get("securityContext")]
     assert len(written) == 1
     assert written[0]["securityContext"]["reference"] == f"DocumentReference/{doc['id']}"
+
+
+async def test_a_binary_read_returns_content_not_fhir_json(medplum, terminology):
+    """`GET /Binary/<id>` serves the stored bytes, not a FHIR resource.
+
+    Reading it like any other resource raised "Expecting value: line 1 column
+    1" against the live server — the note text is not JSON. The store protocol
+    gives Binary its own method so the next caller cannot make that assumption
+    by accident.
+    """
+    binary = medplum.seed(
+        {
+            "resourceType": "Binary",
+            "contentType": "text/plain",
+            "data": base64.b64encode(b"## Mobility\n- Reports the stairs are harder.").decode(),
+        }
+    )
+
+    text = await medplum.read_binary(binary["id"])
+
+    assert text.startswith("## Mobility")
+    assert "stairs" in text
+
+
+async def test_an_absent_binary_raises_rather_than_returning_empty(medplum, terminology):
+    # read_recent_note_texts catches this and drops the one note; the store
+    # itself must not paper over a missing resource.
+    with pytest.raises(KeyError):
+        await medplum.read_binary("does-not-exist")

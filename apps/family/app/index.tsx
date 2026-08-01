@@ -47,7 +47,7 @@ import { useGuidance } from '../src/data/guidance';
 import { patientFirstName as firstNameOf, useMonitoredPatient } from '../src/data/patient';
 import { usePreferences } from '../src/data/preferences';
 import { describeNextCall, nextCall, nextCallSummary } from '../src/data/schedule';
-import { overallStatus, latestCheckInDate, unseenAlerts } from '../src/data/status';
+import { QUIET_SPELL_DAYS, daysSince, latestCheckInDate, unseenAlerts } from '../src/data/status';
 import {
   callsThisMonth,
   checkInSubtitle,
@@ -67,7 +67,6 @@ import { PatientPicker } from '../src/ui/PatientPicker';
 import { Screen } from '../src/ui/Screen';
 import { SectionHeader } from '../src/ui/SectionHeader';
 import { StatTile } from '../src/ui/StatTile';
-import { StatusPill } from '../src/ui/StatusPill';
 import { ThemedText } from '../src/ui/ThemedText';
 import { TopBar } from '../src/ui/TopBar';
 
@@ -135,19 +134,15 @@ export default function Dashboard() {
   const encounters = checkIns.encounters ?? [];
   const open = openAlerts(alerts.tasks);
   const unseen = unseenAlerts(open, acks.isAcknowledged);
-  const status = overallStatus({
-    firstName,
-    encounters: checkIns.encounters,
-    openAlerts: open,
-    unseenAlerts: unseen,
-    loading: checkIns.loading || alerts.loading,
-    error: checkIns.error || alerts.error,
-  });
-
   const upcoming = describeNextCall(nextCall(preferences.preferences?.callWindows));
   const contacts = careContacts(patient, alerts.tasks);
   const latestEncounter = encounters.find((e) => encounterDate(e) !== undefined);
   const lastCall = latestCheckInDate(checkIns.encounters);
+  // The status hero used to be the only thing that said "no calls for a
+  // fortnight". Silence is not good news — PLAN.md is explicit that rendering
+  // it as reassurance is the failure mode that matters most here — so the tile
+  // carries that signal now rather than it leaving with the hero.
+  const quiet = lastCall !== undefined && daysSince(lastCall) > QUIET_SPELL_DAYS;
   const recent = encounters.slice(0, INLINE_CHECKINS);
 
   // Acknowledgement is a nicety layered on the voice service; if that service
@@ -291,13 +286,12 @@ export default function Dashboard() {
     <Screen>
       <TopBar />
 
-      <Hero eyebrow="Juniper Family" title={`How is ${firstName} doing?`}>
-        <StatusPill tone={status.tone} label={status.badge} />
-        <ThemedText variant="h3">{status.headline}</ThemedText>
-        <ThemedText variant="body" color={theme.colors.text.secondary}>
-          {status.detail}
-        </ThemedText>
-      </Hero>
+      {/* Title only. The status row that used to live here — pill, headline,
+          supporting line — restated what the band directly below it already
+          says, in more words and with less context. Three of them said
+          "attention"; removing the whole block is what finally stops the page
+          telling you the same thing before it tells you the thing. */}
+      <Hero eyebrow="Juniper Family" title={`How is ${firstName} doing?`} />
 
       {/* Before the statistics, not after. An alert raised at 11pm must not
           sit underneath "calls this month" — urgency outranks summary, and
@@ -313,7 +307,14 @@ export default function Dashboard() {
         <StatTile
           label="Last call"
           value={relativeDayPhrase(lastCall)}
-          caption={latestEncounter ? checkInSubtitle(latestEncounter) : 'No calls recorded yet'}
+          caption={
+            quiet
+              ? `No calls for over ${QUIET_SPELL_DAYS} days`
+              : latestEncounter
+                ? checkInSubtitle(latestEncounter)
+                : 'No calls recorded yet'
+          }
+          valueColor={quiet ? theme.colors.semantic.error.text : undefined}
         />
         <StatTile
           label="Next call"
