@@ -45,7 +45,11 @@ describe('overallStatus', () => {
       NOW
     );
     expect(status.tone).toBe('attention');
-    expect(status.headline).toBe('2 things need your attention');
+    // The headline says WHEN, not "attention" — the red pill already says
+    // that, and repeating it crowds out the fact a worried reader wants next.
+    expect(status.headline).toBe('Juniper raised 2 things');
+    expect(status.headline).not.toMatch(/attention/i);
+    expect(status.badge).toBe('Needs attention');
   });
 
   it('does NOT claim all-clear when an acknowledged alert is still open with the care team', () => {
@@ -105,5 +109,61 @@ describe('unseenAlerts', () => {
   it('treats an alert with no id as unseen rather than dropping it', () => {
     const idless = { resourceType: 'Task', status: 'requested', intent: 'order' } as Task;
     expect(unseenAlerts([idless], () => false)).toHaveLength(1);
+  });
+});
+
+describe('the alert headline says when, not "attention"', () => {
+  const alert = (id: string, authoredOn?: string): Task => ({
+    resourceType: 'Task',
+    id,
+    status: 'requested',
+    intent: 'order',
+    authoredOn,
+  });
+
+  const base = {
+    firstName: 'Peggy',
+    encounters: [],
+    loading: false,
+    error: false,
+  };
+
+  const NOW = new Date('2026-08-01T12:00:00Z');
+
+  it('names the day for a single alert', () => {
+    // relativeDayPhrase measures ELAPSED time, not calendar days, so this is
+    // 26 hours rather than "some time yesterday evening" — an alert raised at
+    // 10pm still reads as "today" at noon the next day.
+    const tasks = [alert('t1', '2026-07-31T10:00:00Z')];
+    const status = overallStatus(
+      { ...base, openAlerts: tasks, unseenAlerts: tasks },
+      NOW
+    );
+    expect(status.headline).toBe('Juniper raised something yesterday');
+    expect(status.headline).not.toMatch(/attention/i);
+  });
+
+  it('uses the most recent when several are waiting', () => {
+    const tasks = [
+      alert('old', '2026-07-20T09:00:00Z'),
+      alert('new', '2026-08-01T09:00:00Z'),
+    ];
+    const status = overallStatus(
+      { ...base, openAlerts: tasks, unseenAlerts: tasks },
+      NOW
+    );
+    expect(status.headline).toBe('Juniper raised 2 things, most recently today');
+  });
+
+  it('drops the clause rather than saying "most recently none yet"', () => {
+    // A Task with no authoredOn is malformed; the headline must degrade to
+    // something true rather than to nonsense.
+    const tasks = [alert('t1'), alert('t2')];
+    const status = overallStatus(
+      { ...base, openAlerts: tasks, unseenAlerts: tasks },
+      NOW
+    );
+    expect(status.headline).toBe('Juniper raised 2 things');
+    expect(status.headline).not.toMatch(/none yet/i);
   });
 });

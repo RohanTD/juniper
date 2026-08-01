@@ -14,7 +14,7 @@
  * matters most here.
  */
 import type { Encounter, Task } from '@medplum/fhirtypes';
-import { encounterDate } from './timeline';
+import { encounterDate, relativeDayPhrase } from './timeline';
 
 export type StatusTone = 'good' | 'attention' | 'unknown';
 
@@ -63,6 +63,16 @@ export function daysSince(date: Date, now: Date = new Date()): number {
   return Math.floor((now.getTime() - date.getTime()) / 86_400_000);
 }
 
+/** When the most recent of these alerts was raised. */
+export function mostRecentAlertDate(tasks: Task[]): Date | undefined {
+  const times = tasks
+    .map((task) => (task.authoredOn ? new Date(task.authoredOn) : undefined))
+    .filter((d): d is Date => d !== undefined && !Number.isNaN(d.getTime()));
+  return times.length > 0
+    ? times.reduce((newest, d) => (d > newest ? d : newest))
+    : undefined;
+}
+
 export function latestCheckInDate(encounters: Encounter[] | undefined): Date | undefined {
   return (encounters ?? []).map(encounterDate).find((d): d is Date => d !== undefined);
 }
@@ -93,13 +103,22 @@ export function overallStatus(input: StatusInput, now: Date = new Date()): Overa
   // thing a caregiver must not have to scroll to find.
   if (unseen.length > 0) {
     const count = unseen.length;
+    // The headline does NOT restate the badge. "Needs attention" in a red pill
+    // above the sentence "one thing needs your attention" above a section
+    // headed "Needs attention" is the same fact three times, and the two
+    // repetitions crowd out the thing a worried reader actually wants next,
+    // which is WHEN. Saying that costs nothing and earns the line.
+    // An alert with no authoredOn is malformed, but it must not turn the
+    // headline into nonsense ("most recently none yet"). Drop the clause.
+    const raisedAt = mostRecentAlertDate(unseen);
+    const when = raisedAt ? ` ${relativeDayPhrase(raisedAt, now).toLowerCase()}` : '';
     return {
       tone: 'attention',
       badge: 'Needs attention',
       headline:
         count === 1
-          ? 'One thing needs your attention'
-          : `${count} things need your attention`,
+          ? `Juniper raised something${when}`
+          : `Juniper raised ${count} things${when ? `, most recently${when}` : ''}`,
       detail:
         'Each one says what was said, when, and what has already been done about it.',
     };

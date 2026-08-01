@@ -181,7 +181,10 @@ export default function Dashboard() {
   const urgent =
     unseen.length === 0 ? null : (
       <View>
-        <SectionHeader title="Needs attention" />
+        {/* Named for what it contains, not for the state. The red pill in the
+            hero already says "Needs attention"; repeating it here spends a
+            heading on a fact the reader has just been told. */}
+        <SectionHeader title="What Juniper raised" />
         {/* Answers "am I looking at current information?" on the page rather
             than in the console. Polling is the normal mode for a caregiver:
             live delivery needs Subscription access the AccessPolicy does not
