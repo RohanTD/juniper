@@ -350,11 +350,17 @@ const onboardingPolicy = files.get(join(RESOURCES_DIR, 'access-policy-patient-on
   // signed in with the stock policy fills in all thirteen onboarding screens
   // and is then Forbidden at submit. The Consent assertion below is the
   // regression guard for exactly that failure; do not relax it.
-  const ONBOARDING_WRITABLE = new Set(['Patient', 'RelatedPerson', 'CareTeam', 'Consent']);
+  // Patient is NOT here. Onboarding does not write demographics: the chart
+  // belongs to the clinic, and what the patient types into the app goes to the
+  // voice service's app-level `enrollment` store instead (CONTRACTS.md §1).
+  // RelatedPerson / CareTeam / Consent stay writable because they are not the
+  // clinic's demographics — they are new, Juniper-scoped facts about who the
+  // patient named as family and what they authorized.
+  const ONBOARDING_WRITABLE = new Set(['RelatedPerson', 'CareTeam', 'Consent']);
   // The patient sees their own chart but authors nothing clinical — the same
   // reads-broad/writes-narrow asymmetry the voice service is held to.
   const ONBOARDING_READONLY = [
-    'AllergyIntolerance', 'Condition', 'MedicationRequest', 'MedicationStatement',
+    'Patient', 'AllergyIntolerance', 'Condition', 'MedicationRequest', 'MedicationStatement',
     'Observation', 'Encounter', 'Appointment', 'CarePlan', 'Goal',
   ];
   if (!onboardingPolicy) {

@@ -40,13 +40,24 @@ Body (both directions):
       "timezone": "America/New_York" }
   ],
   "topicsToAvoid": ["her late husband Robert"],
-  "completedBy": { "role": "patient" }
+  "completedBy": { "role": "patient" },
+  "enrollment": {
+    "legalName": { "given": "Margaret", "family": "Alvarez" },
+    "preferredName": "Peggy",
+    "birthDate": "1946-03-12",
+    "phone": "+15552018890",
+    "language": { "code": "en", "label": "English" }
+  }
 }
 ```
 
 - `completedBy.role` is `"patient"` or `"proxy"`; proxy adds `name` and `relationship`.
   This mirrors `Consent.performer` — proxy-captured consent is a materially different claim
   and must survive in both records.
+- `enrollment` is the demographics onboarding deliberately does **not** write to `Patient`;
+  see §3 for why, and for how the voice service reconciles it against the chart. It is
+  preserved across a PUT that omits it, so no client can delete the dial number by staying
+  quiet.
 - `topicsToAvoid` entries become **negative constraints** in the Context Brain's experiential
   tier, enforced independently by the compassion filter.
 - Voice-side updates go through Companion tool calls `update_call_windows` and
@@ -68,12 +79,41 @@ The family app must function with **only** these — the caregiver AccessPolicy 
 
 | Field | Destination |
 |---|---|
-| Legal name, DOB, phone | `Patient` (`telecom` = number to dial) |
-| Preferred name | `Patient.name` with `use: nickname` |
-| Language | `Patient.communication` |
+| Legal name, DOB, phone, preferred name, language | Preferences API `enrollment` (§1) — **never `Patient`** |
 | Family/caregiver contact | `RelatedPerson` + `CareTeam.participant` |
 | Three consents | One `Consent` resource, one `provision` per granted item, coded with `consentProvision` codes; `Consent.performer` records who consented |
 | Call windows, topics to avoid, proxy flag | Preferences API (§1) |
+
+**Onboarding does not write demographics.** The chart belongs to the clinic that keeps it. An
+app filled in on a phone — by someone in their eighties, or by whichever relative is sitting
+with them — is not an authority to overwrite a legal name, a date of birth, or the number a
+practice has on file; the likeliest outcome of a typo is a demographic correction nobody
+clinical asked for and nobody notices. So Juniper keeps its own copy of what it was told, for
+its own operational purposes. The onboarding AccessPolicy is read-only on `Patient`, so this is
+enforced server-side rather than by this app's good behavior.
+
+`RelatedPerson`, `CareTeam` and `Consent` *are* still written: they are not the clinic's
+demographics but new, Juniper-scoped facts — who the patient named as family (which is what
+caregiver access derives from) and what they authorized.
+
+### Reconciling the two at call time
+
+The voice service holds both and must choose. `medplum.py::_resolve_identity` decides:
+
+| Field | Wins | Why |
+|---|---|---|
+| Phone (the number dialed) | **Enrollment** | A mobile the practice was never told about is the likeliest disagreement; dialing the chart's stale number means not reaching the patient at all. |
+| Preferred name, language | **Enrollment** | Facts about *our* interaction, given to us directly and more recently. |
+| Legal name, birth date | **Chart** | These identify the person to their clinicians. Enrollment fills them in only when the chart has none (a stub record an admin created and never completed). |
+
+**A disagreement is reported, never silently resolved.** Every substituted value adds a line to
+the highest-priority section of the EHR brief, where the token budget cannot trim it — "the
+chart still lists +1 555 000 1111" is exactly what a clinician should see.
+
+The `enrollment` block is also **preserved by a PUT that omits it**. The family app's
+call-settings screen and the Companion's `update_call_windows` tool each write what they know
+about, and neither restates a phone number; under strict replacement the first save from either
+would silently delete the only way to reach the patient.
 
 The voice service's pre-call gate refuses to dial unless the `Consent` grants `ai-calling`
 **and** `call-recording`. `family-sharing` gates only the family summary generation.

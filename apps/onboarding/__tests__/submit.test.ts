@@ -3,11 +3,11 @@
  * client. All codes must come from @juniper/terminology.
  */
 import { CONSENT_POLICY_URI, CONSENT_PROVISION, EXTERNAL } from '@juniper/terminology';
-import type { CareTeam, Patient, Resource } from '@medplum/fhirtypes';
+import type { CareTeam, Resource } from '@medplum/fhirtypes';
 import type { PatientPreferences } from '../src/preferences';
 import {
   buildConsent,
-  buildPatientUpdate,
+  buildEnrollmentProfile,
   submitOnboarding,
   type OnboardingAnswers,
   type OnboardingFhirClient,
@@ -33,7 +33,6 @@ function makeFakeFhir(existingCareTeam?: CareTeam) {
   const created: Resource[] = [];
   const updated: Resource[] = [];
   const fhir: OnboardingFhirClient = {
-    readResource: async (_type, id) => ({ resourceType: 'Patient', id }) as Patient,
     createResource: async <T extends Resource>(resource: T) => {
       const withId = { ...resource, id: `${resource.resourceType.toLowerCase()}-${nextId++}` } as T;
       created.push(withId);
@@ -59,29 +58,34 @@ function makeFakePrefs() {
   };
 }
 
-describe('buildPatientUpdate', () => {
-  it('writes official name, nickname, birthDate, telecom and communication', () => {
-    const patient = buildPatientUpdate({ resourceType: 'Patient', id: 'p1' }, baseAnswers);
-    expect(patient.name).toEqual([
-      { use: 'official', family: 'Hollis', given: ['Margaret'] },
-      { use: 'nickname', given: ['Peggy'] },
-    ]);
-    expect(patient.birthDate).toBe('1946-03-12');
-    expect(patient.telecom?.[0]).toMatchObject({ system: 'phone', value: '(555) 201-8890' });
-    expect(patient.communication?.[0].language.coding?.[0]).toEqual({
-      system: 'urn:ietf:bcp:47',
-      code: 'en',
+describe('buildEnrollmentProfile', () => {
+  it('carries every demographic Juniper needs operationally', () => {
+    const profile = buildEnrollmentProfile(baseAnswers);
+    expect(profile).toEqual({
+      legalName: { given: 'Margaret', family: 'Hollis' },
+      birthDate: '1946-03-12',
+      phone: '(555) 201-8890',
+      preferredName: 'Peggy',
+      language: { code: 'en', label: 'English' },
     });
-    expect(patient.communication?.[0].preferred).toBe(true);
   });
 
-  it('omits the nickname entry when no preferred name is given', () => {
-    const patient = buildPatientUpdate(
-      { resourceType: 'Patient', id: 'p1' },
-      { ...baseAnswers, preferredName: undefined }
-    );
-    expect(patient.name).toHaveLength(1);
-    expect(patient.name?.[0].use).toBe('official');
+  it('omits the preferred name rather than storing an empty one', () => {
+    const profile = buildEnrollmentProfile({ ...baseAnswers, preferredName: undefined });
+    expect(profile.preferredName).toBeUndefined();
+    expect(profile.legalName).toEqual({ given: 'Margaret', family: 'Hollis' });
+  });
+
+  it('trims what was typed', () => {
+    const profile = buildEnrollmentProfile({
+      ...baseAnswers,
+      legalName: { given: '  Margaret ', family: ' Hollis  ' },
+      phone: '  (555) 201-8890 ',
+      preferredName: '  Peggy  ',
+    });
+    expect(profile.legalName).toEqual({ given: 'Margaret', family: 'Hollis' });
+    expect(profile.phone).toBe('(555) 201-8890');
+    expect(profile.preferredName).toBe('Peggy');
   });
 });
 
@@ -118,14 +122,17 @@ describe('buildConsent', () => {
 });
 
 describe('submitOnboarding', () => {
-  it('writes Patient, RelatedPerson + CareTeam, Consent, and preferences (patient-completed)', async () => {
+  it('writes RelatedPerson + CareTeam, Consent, and preferences (patient-completed)', async () => {
     const { fhir, created, updated } = makeFakeFhir();
     const prefs = makeFakePrefs();
 
     const result = await submitOnboarding(fhir, prefs, 'p1', baseAnswers);
 
-    // Patient updated in place.
-    expect(updated.some((r) => r.resourceType === 'Patient')).toBe(true);
+    // The chart's demographics are NOT touched. The clinic owns them; what the
+    // patient typed on a phone goes to Juniper's own store instead.
+    expect(created.some((r) => r.resourceType === 'Patient')).toBe(false);
+    expect(updated.some((r) => r.resourceType === 'Patient')).toBe(false);
+    expect(prefs.calls[0].preferences.enrollment).toEqual(buildEnrollmentProfile(baseAnswers));
     // Family RelatedPerson created and placed on a new CareTeam.
     expect(result.familyRelatedPerson?.relationship?.[0].text).toBe('daughter');
     const team = created.find((r) => r.resourceType === 'CareTeam') as CareTeam;

@@ -472,11 +472,17 @@ async def compile_patient_context(
     enforce_consent: bool = True,
     today_iso: str | None = None,
     now_iso: str | None = None,
+    enrollment: Mapping[str, Any] | None = None,
 ) -> PatientContext:
     """The pre-call read: consent gate, one chart snapshot, one compiled brief.
 
     The consent gate runs here so nothing downstream can dial without it — and
     it runs fresh on every call, never from any cached or indexed state.
+
+    ``enrollment`` is what the patient told Juniper at onboarding, from the
+    app-level preferences store.  It is passed in rather than fetched here so
+    this module keeps its single job — FHIR — and so a caller that has no
+    preferences store still gets a working brief from the chart alone.
     """
     consent = await verify_consent(store, patient_id, terminology)
     if enforce_consent:
@@ -484,7 +490,9 @@ async def compile_patient_context(
     snapshot = await fetch_chart_snapshot(
         store, patient_id, terminology, today_iso=today_iso, now_iso=now_iso
     )
-    brief = _compile_brief_from_snapshot(snapshot, consent, patient_id, token_budget)
+    brief = _compile_brief_from_snapshot(
+        snapshot, consent, patient_id, token_budget, enrollment
+    )
     return PatientContext(brief=brief, snapshot=snapshot)
 
 
@@ -496,6 +504,7 @@ async def compile_ehr_brief(
     token_budget: int = 2500,
     enforce_consent: bool = True,
     today_iso: str | None = None,
+    enrollment: Mapping[str, Any] | None = None,
 ) -> EHRBrief:
     """Fetch the full read table once and compile — don't concatenate — into a
     compact digest sized to sit in context for the whole call."""
@@ -506,8 +515,90 @@ async def compile_ehr_brief(
         token_budget=token_budget,
         enforce_consent=enforce_consent,
         today_iso=today_iso,
+        enrollment=enrollment,
     )
     return context.brief
+
+
+def _resolve_identity(
+    *,
+    patient_id: str,
+    chart_name: str | None,
+    chart_preferred: str | None,
+    chart_phone: str | None,
+    chart_language: str | None,
+    chart_birth_date: str | None,
+    enrollment: Mapping[str, Any] | None,
+) -> tuple[str, str | None, str | None, str | None, str | None, list[str]]:
+    """Reconcile the chart with what the patient told Juniper at onboarding.
+
+    Onboarding deliberately does **not** write ``Patient`` — the clinic owns
+    its demographics, and a phone handed to an eighty-year-old is not an
+    authority to rewrite a legal name or the practice's number of record.  So
+    two sources exist and they can disagree.  The split:
+
+    * **Operational fields — enrollment wins.**  ``phone`` is the number
+      Juniper dials, ``preferredName`` is what Juniper calls them, ``language``
+      is the language Juniper speaks.  These are facts about *our* interaction,
+      given to us directly and more recently than the chart, and a mobile
+      number the practice never got told is the single most likely
+      disagreement.  Dialing the stale one means not reaching the patient at
+      all.
+    * **Identity fields — the chart wins.**  Legal name and date of birth
+      identify the person to their clinicians; enrollment only fills them in
+      when the chart has none (a record created by an admin and never
+      completed).
+    * **Disagreements are reported, never silently resolved.**  Every
+      substituted value adds a line to the brief.
+
+    Returns ``(name, preferred, phone, language, birth_date, conflict_lines)``.
+    """
+    enrollment = enrollment or {}
+    conflicts: list[str] = []
+
+    def _clean(value: Any) -> str | None:
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    enrolled_preferred = _clean(enrollment.get("preferredName"))
+    enrolled_phone = _clean(enrollment.get("phone"))
+    enrolled_birth_date = _clean(enrollment.get("birthDate"))
+    language_block = enrollment.get("language") or {}
+    enrolled_language = _clean(
+        language_block.get("label") if isinstance(language_block, Mapping) else None
+    )
+    name_block = enrollment.get("legalName") or {}
+    enrolled_name = None
+    if isinstance(name_block, Mapping):
+        parts = [_clean(name_block.get("given")), _clean(name_block.get("family"))]
+        enrolled_name = " ".join(p for p in parts if p) or None
+
+    # Operational: enrollment wins, and a difference is worth saying out loud.
+    phone = enrolled_phone or chart_phone
+    if enrolled_phone and chart_phone and enrolled_phone != chart_phone:
+        conflicts.append(
+            f"Calling {enrolled_phone} — the number given at signup. "
+            f"The chart still lists {chart_phone}."
+        )
+    preferred = enrolled_preferred or chart_preferred
+    if enrolled_preferred and chart_preferred and enrolled_preferred != chart_preferred:
+        conflicts.append(
+            f'Goes by "{enrolled_preferred}" (the chart says "{chart_preferred}").'
+        )
+    language = enrolled_language or chart_language
+    if enrolled_language and chart_language and enrolled_language != chart_language:
+        conflicts.append(
+            f"Prefers {enrolled_language}; the chart records {chart_language}."
+        )
+
+    # Identity: the chart wins, enrollment only fills a gap.
+    patient_name = chart_name or enrolled_name or patient_id
+    if chart_name and enrolled_name and chart_name != enrolled_name:
+        conflicts.append(f'Gave their name at signup as "{enrolled_name}".')
+    birth_date = chart_birth_date or enrolled_birth_date
+    if chart_birth_date and enrolled_birth_date and chart_birth_date != enrolled_birth_date:
+        conflicts.append(f"Gave their date of birth at signup as {enrolled_birth_date}.")
+
+    return patient_name, preferred, phone, language, birth_date, conflicts
 
 
 def _compile_brief_from_snapshot(
@@ -515,6 +606,7 @@ def _compile_brief_from_snapshot(
     consent: ConsentStatus,
     patient_id: str,
     token_budget: int,
+    enrollment: Mapping[str, Any] | None = None,
 ) -> EHRBrief:
     patient = snapshot.patient
     conditions = snapshot.conditions
@@ -533,15 +625,26 @@ def _compile_brief_from_snapshot(
     names = patient.get("name", []) or []
     legal = next((n for n in names if n.get("use") != "nickname"), {})
     nickname = next((n for n in names if n.get("use") == "nickname"), None)
-    patient_name = _human_name(legal) if legal else patient_id
-    preferred = _human_name(nickname) if nickname else None
-    phone = next(
+    chart_name = _human_name(legal) if legal else None
+    chart_preferred = _human_name(nickname) if nickname else None
+    chart_phone = next(
         (t.get("value") for t in patient.get("telecom", []) or [] if t.get("system") == "phone"),
         None,
     )
-    language = None
+    chart_language = None
     for communication in patient.get("communication", []) or []:
-        language = _coding_display(communication.get("language")) or language
+        chart_language = _coding_display(communication.get("language")) or chart_language
+    chart_birth_date = patient.get("birthDate")
+
+    patient_name, preferred, phone, language, birth_date, identity_conflicts = _resolve_identity(
+        patient_id=patient_id,
+        chart_name=chart_name,
+        chart_preferred=chart_preferred,
+        chart_phone=chart_phone,
+        chart_language=chart_language,
+        chart_birth_date=chart_birth_date,
+        enrollment=enrollment,
+    )
 
     care_team: list[CareTeamMember] = []
     seen_refs: set[str] = set()
@@ -571,9 +674,15 @@ def _compile_brief_from_snapshot(
     identity.lines.append(
         f"{patient_name}"
         + (f' (goes by "{preferred}")' if preferred else "")
-        + (f", born {patient['birthDate']}" if patient.get("birthDate") else "")
+        + (f", born {birth_date}" if birth_date else "")
         + (f", speaks {language}" if language else "")
     )
+    # A disagreement between the chart and what the patient told Juniper is
+    # itself clinical signal — a number changed and nobody told the practice,
+    # or a name the chart never learned.  Silently preferring one would throw
+    # that away, so it rides along in the highest-priority section, where the
+    # token budget cannot trim it.
+    identity.lines.extend(identity_conflicts)
     sections.append(identity)
 
     meds = _Section(1, "Medications")

@@ -22,7 +22,7 @@ caregiver policy's criteria.
 | `resources/organization-clinic.json` | The pilot clinic (`DocumentReference.custodian`). |
 | `resources/access-policy-voice-service.json` | Voice service policy: broad read, writes only Encounter / Binary / DocumentReference / Task. |
 | `resources/access-policy-caregiver.json` | Parameterized read-only caregiver policy, bound per-patient at membership time. |
-| `resources/access-policy-patient-onboarding.json` | Parameterized policy for a patient completing their own setup: writes Patient / RelatedPerson / CareTeam / **Consent**, reads their own chart. |
+| `resources/access-policy-patient-onboarding.json` | Parameterized policy for a patient completing their own setup: writes RelatedPerson / CareTeam / **Consent** only, reads their own chart. `Patient` is deliberately read-only — onboarding does not write demographics. |
 | `resources/client-application-voice.json` | ClientApplication template for the voice service. No secret committed. |
 | `seed/seed-bundle.json` | Margaret "Peggy" Alvarez — fully populated test patient (30-entry transaction). |
 | `seed/seed-bundle-second-patient.json` | Harold "Hal" Nakamura — thin second patient whose Consent withholds family-sharing. Exists to prove caregiver isolation and consent gating. |
@@ -307,7 +307,9 @@ Two operational notes:
   already-issued access token. Sign out and back in, or the same `Forbidden`
   persists against a policy that is now correct.
 - Verify with the patient's own credentials: `POST /fhir/R4/Consent` for
-  themselves must succeed, `POST /fhir/R4/Observation` must return 403, and
+  themselves must succeed, `POST /fhir/R4/Observation` must return 403,
+  `PUT /fhir/R4/Patient/<their own id>` must return 403 (demographics are the
+  clinic's, not the app's — see docs/CONTRACTS.md §3), and
   `GET /fhir/R4/Patient/<another patient's id>` must 404.
 
 ## Seed data

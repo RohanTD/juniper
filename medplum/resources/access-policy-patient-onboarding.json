@@ -6,7 +6,8 @@
     {
       "resourceType": "Patient",
       "criteria": "Patient?_id=%patient.id",
-      "_comment": "Writable: onboarding sets name, birthDate, telecom and communication.language on the patient's OWN record only. %patient.id is bound per-membership, so this can never reach another patient."
+      "readonly": true,
+      "_comment": "READ-ONLY, and deliberately so. Onboarding used to write name, birthDate, telecom and communication here; it no longer writes demographics at all. The chart belongs to the clinic that keeps it, and an app filled in on a phone by an eighty-year-old (or by whichever relative is sitting with them) is not an authority to overwrite a legal name, a date of birth, or the number a practice has on file. What the patient tells Juniper now goes to the voice service's app-level store as `enrollment` (docs/CONTRACTS.md §1) and is reconciled at call time. Read access stays: the app still shows people their own record."
     },
     {
       "resourceType": "RelatedPerson",

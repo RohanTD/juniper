@@ -331,11 +331,19 @@ def create_app(
                     logger.info("using pre-warmed context for patient=%s", patient_id)
                     return context
                 app.state.warm_context.pop(patient_id, None)
+        # Onboarding does not write Patient demographics — the chart belongs to
+        # the clinic — so the number Juniper dials and the name it greets with
+        # come from the app-level store instead. Read here rather than inside
+        # medplum.py so that module stays purely FHIR.
+        stored = preferences.get(patient_id)
         context = await compile_patient_context(
             medplum,
             patient_id,
             terminology,
             token_budget=settings.ehr_brief_token_budget,
+            enrollment=(
+                stored.enrollment.model_dump(exclude_none=True) if stored.enrollment else None
+            ),
         )
         app.state.warm_context[patient_id] = (context, time.monotonic())
         return context

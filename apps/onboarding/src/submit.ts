@@ -1,14 +1,31 @@
 /**
  * The one write path of the onboarding app, per docs/CONTRACTS.md section 3:
  *
- *   Legal name, DOB, phone      -> Patient (telecom = number to dial)
- *   Preferred name              -> Patient.name with use: nickname
- *   Language                    -> Patient.communication
+ *   Legal name, DOB, phone,     -> Preferences API `enrollment` (section 1).
+ *   preferred name, language       NOT the FHIR Patient. See below.
  *   Family/caregiver contact    -> RelatedPerson + CareTeam.participant
  *   Three consents              -> ONE Consent, one provision per GRANTED item,
  *                                  coded with terminology consentProvision codes;
  *                                  Consent.performer records who consented
  *   Call windows, topics, proxy -> Preferences API (section 1)
+ *
+ * ## Why onboarding does not write demographics
+ *
+ * It used to update `Patient` — name, birthDate, telecom, communication — and
+ * that was wrong. The chart belongs to the clinic that keeps it. An app on a
+ * phone, filled in by someone in their eighties or by whichever relative is
+ * sitting with them, is not an authority to overwrite a legal name, a date of
+ * birth, or the number a practice has on file; the most likely outcome of a
+ * typo is a demographic correction nobody clinical ever asked for and nobody
+ * notices. Juniper needs these facts operationally — a number to dial, a name
+ * to greet with — so it keeps its own copy and reconciles at call time,
+ * preferring what the patient told us for operational fields and *reporting*
+ * any disagreement with the chart rather than silently resolving it.
+ *
+ * RelatedPerson, CareTeam and Consent are still written, and deliberately so:
+ * they are not the clinic's demographics but new, Juniper-scoped facts —
+ * who the patient named as family (which is what caregiver access derives
+ * from) and what they authorized.
  *
  * Pure resource-building functions + a submit orchestrator over a minimal
  * FHIR client interface (MedplumClient satisfies it; tests use a fake).
@@ -19,13 +36,17 @@ import type {
   CareTeam,
   Coding,
   Consent,
-  HumanName,
   Patient,
   Reference,
   RelatedPerson,
   Resource,
 } from '@medplum/fhirtypes';
-import type { CallWindow, CompletedBy, PatientPreferences } from './preferences';
+import type {
+  CallWindow,
+  CompletedBy,
+  EnrollmentProfile,
+  PatientPreferences,
+} from './preferences';
 
 export interface LanguageChoice {
   /** BCP-47 code, e.g. "en", "es". */
@@ -61,8 +82,8 @@ export interface OnboardingAnswers {
 
 /** The narrow slice of MedplumClient that submit needs; fakes are trivial. */
 export interface OnboardingFhirClient {
-  readResource(resourceType: 'Patient', id: string): Promise<Patient>;
   createResource<T extends Resource>(resource: T): Promise<T>;
+  /** Only ever an existing CareTeam gaining a participant. Never a Patient. */
   updateResource<T extends Resource>(resource: T): Promise<T>;
   searchOne(resourceType: 'CareTeam', query: string): Promise<CareTeam | undefined>;
 }
@@ -75,33 +96,29 @@ export interface PreferencesWriter {
 // Resource builders (pure)
 // ---------------------------------------------------------------------------
 
-export function buildPatientUpdate(existing: Patient, answers: OnboardingAnswers): Patient {
-  const names: HumanName[] = [
-    {
-      use: 'official',
+/**
+ * The demographics, shaped for Juniper's own store instead of for `Patient`.
+ *
+ * Every field here was previously written to the chart. Keeping the same set
+ * is deliberate — the voice service needs all of it (a number to dial, a name
+ * to greet with, a language to speak, and legal name / birth date to fall back
+ * on when the chart is a stub an admin created and never filled in).
+ */
+export function buildEnrollmentProfile(answers: OnboardingAnswers): EnrollmentProfile {
+  const profile: EnrollmentProfile = {
+    legalName: {
+      given: answers.legalName.given.trim(),
       family: answers.legalName.family.trim(),
-      given: [answers.legalName.given.trim()],
     },
-  ];
+    birthDate: answers.dob,
+    phone: answers.phone.trim(),
+    language: { code: answers.language.code, label: answers.language.label },
+  };
   const preferred = answers.preferredName?.trim();
   if (preferred) {
-    names.push({ use: 'nickname', given: [preferred] });
+    profile.preferredName = preferred;
   }
-  return {
-    ...existing,
-    name: names,
-    birthDate: answers.dob,
-    telecom: [{ system: 'phone', value: answers.phone.trim(), use: 'home' }],
-    communication: [
-      {
-        language: {
-          coding: [{ system: 'urn:ietf:bcp:47', code: answers.language.code }],
-          text: answers.language.label,
-        },
-        preferred: true,
-      },
-    ],
-  };
+  return profile;
 }
 
 export function buildFamilyRelatedPerson(
@@ -179,7 +196,6 @@ export function buildConsent(
 // ---------------------------------------------------------------------------
 
 export interface SubmitResult {
-  patient: Patient;
   familyRelatedPerson?: RelatedPerson;
   careTeam?: CareTeam;
   proxyRelatedPerson?: RelatedPerson;
@@ -195,11 +211,7 @@ export async function submitOnboarding(
 ): Promise<SubmitResult> {
   const patientRef: Reference<Patient> = { reference: `Patient/${patientId}` };
 
-  // 1. Patient: official name, nickname, birthDate, telecom, communication.
-  const existing = await fhir.readResource('Patient', patientId);
-  const patient = await fhir.updateResource(buildPatientUpdate(existing, answers));
-
-  // 2. Family/caregiver contact -> RelatedPerson + CareTeam.participant.
+  // 1. Family/caregiver contact -> RelatedPerson + CareTeam.participant.
   let familyRelatedPerson: RelatedPerson | undefined;
   let careTeam: CareTeam | undefined;
   if (answers.familyContact) {
@@ -233,7 +245,7 @@ export async function submitOnboarding(
     }
   }
 
-  // 3. Who consented. Proxy-captured consent must survive as such in the record.
+  // 2. Who consented. Proxy-captured consent must survive as such in the record.
   let proxyRelatedPerson: RelatedPerson | undefined;
   let performerRef: Reference<Patient | RelatedPerson>;
   if (answers.completedBy.role === 'proxy') {
@@ -253,17 +265,21 @@ export async function submitOnboarding(
     performerRef = patientRef;
   }
 
-  // 4. ONE Consent, one provision per granted item.
+  // 3. ONE Consent, one provision per granted item.
   const consent = await fhir.createResource(
     buildConsent(patientRef, performerRef, answers.consents)
   );
 
-  // 5. Call windows + topics to avoid + completedBy -> Preferences API.
+  // 4. Everything else -> Preferences API: call windows, topics to avoid,
+  //    who completed the form, and the demographics that used to go to the
+  //    chart. Last, because it is the only step that is safely repeatable —
+  //    a whole-object PUT — so a retry after a partial failure converges.
   const preferences = await preferencesApi.putPreferences(patientId, {
     callWindows: answers.callWindows,
     topicsToAvoid: answers.topicsToAvoid,
     completedBy: answers.completedBy,
+    enrollment: buildEnrollmentProfile(answers),
   });
 
-  return { patient, familyRelatedPerson, careTeam, proxyRelatedPerson, consent, preferences };
+  return { familyRelatedPerson, careTeam, proxyRelatedPerson, consent, preferences };
 }

@@ -25,10 +25,33 @@ export type CompletedBy =
   | { role: 'patient' }
   | { role: 'proxy'; name: string; relationship: string };
 
+/**
+ * What the patient told Juniper at setup — legal name, birth date, the number
+ * to dial, preferred name, language. Never written to the FHIR `Patient`: the
+ * chart's demographics belong to the clinic, so Juniper keeps its own copy for
+ * its own purposes.
+ *
+ * The family app neither renders nor edits this. It is here only so a
+ * get → edit → put round-trip on the call-settings screen carries it back
+ * untouched. (The service also preserves it when a body omits it, so a client
+ * cannot delete the dial number by staying quiet — belt and braces, because
+ * losing it means the patient stops being called at all.)
+ */
+export interface EnrollmentProfile {
+  legalName?: { given: string; family: string };
+  preferredName?: string;
+  /** ISO date YYYY-MM-DD. */
+  birthDate?: string;
+  /** The number Juniper dials. */
+  phone?: string;
+  language?: { code: string; label: string };
+}
+
 export interface PatientPreferences {
   callWindows: CallWindow[];
   topicsToAvoid: string[];
   completedBy: CompletedBy;
+  enrollment?: EnrollmentProfile;
 }
 
 /**

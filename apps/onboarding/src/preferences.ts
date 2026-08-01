@@ -24,10 +24,32 @@ export type CompletedBy =
   | { role: 'patient' }
   | { role: 'proxy'; name: string; relationship: string };
 
+/**
+ * What the patient told Juniper about themselves during setup.
+ *
+ * Deliberately NOT written to the FHIR `Patient`. The chart's demographics
+ * belong to the clinic that owns it; a phone handed to an eighty-year-old is
+ * not an authority to overwrite a legal name, a date of birth, or the number
+ * the practice has on file. Juniper keeps what it was told for Juniper's own
+ * purposes — who to dial, what to call them, which language to speak — and
+ * leaves the chart alone. The voice service reconciles the two, preferring
+ * these for operational fields and reporting any disagreement in the brief.
+ */
+export interface EnrollmentProfile {
+  legalName?: { given: string; family: string };
+  preferredName?: string;
+  /** ISO date YYYY-MM-DD. */
+  birthDate?: string;
+  /** The number Juniper dials. */
+  phone?: string;
+  language?: { code: string; label: string };
+}
+
 export interface PatientPreferences {
   callWindows: CallWindow[];
   topicsToAvoid: string[];
   completedBy: CompletedBy;
+  enrollment?: EnrollmentProfile;
 }
 
 export class PreferencesApiError extends Error {
