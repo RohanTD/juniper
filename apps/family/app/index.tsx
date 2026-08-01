@@ -158,8 +158,20 @@ export default function Dashboard() {
       : {};
 
   // ---- full-measure band: anything urgent ---------------------------------
+  //
+  // Driven by UNSEEN alerts, not open ones. "I've seen this" has to actually
+  // do something, or it is a button that lies: an alert you have read and
+  // decided about should stop being the first thing you see every time you
+  // open the dashboard, otherwise the band trains you to ignore it and the one
+  // that matters gets ignored with it.
+  //
+  // Acknowledging is NOT resolving, so nothing is deleted or hidden from the
+  // record — the alert stays open, stays on /alerts with its full context, and
+  // the count below says how many are still open with the care team. This band
+  // answers "what needs me right now", which is a different question.
+  const acknowledgedOpen = open.length - unseen.length;
   const urgent =
-    open.length === 0 ? null : (
+    unseen.length === 0 ? null : (
       <View>
         <SectionHeader title="Needs attention" />
         {/* Answers "am I looking at current information?" on the page rather
@@ -172,20 +184,43 @@ export default function Dashboard() {
           </ThemedText>
         ) : null}
         <View style={{ gap: theme.spacing.md }}>
-          {open.slice(0, INLINE_ALERTS).map((task) => (
+          {unseen.slice(0, INLINE_ALERTS).map((task) => (
             <AlertCard key={task.id} task={task} {...alertControls(task.id)} />
           ))}
-          {open.length > INLINE_ALERTS ? (
+          {unseen.length > INLINE_ALERTS ? (
             <Card
               icon="bell"
-              title={`${open.length - INLINE_ALERTS} more open`}
+              title={`${unseen.length - INLINE_ALERTS} more to look at`}
               subtitle="See every alert and what happened next"
               onPress={() => router.push('/alerts')}
             />
           ) : null}
+          {/* What acknowledging moved out of the way — stated, so the band
+              emptying never reads as alerts having disappeared. */}
+          {acknowledgedOpen > 0 ? (
+            <ThemedText variant="bodySmall" color={theme.colors.text.secondary}>
+              {acknowledgedOpen === 1
+                ? '1 more alert you’ve marked as seen is still open with the care team.'
+                : `${acknowledgedOpen} more alerts you’ve marked as seen are still open with the care team.`}
+            </ThemedText>
+          ) : null}
         </View>
       </View>
     );
+
+  // Everything open has been seen. Say so rather than rendering nothing, which
+  // would be indistinguishable from "no alerts have ever been raised".
+  const allSeen =
+    unseen.length === 0 && open.length > 0 ? (
+      <View>
+        <SectionHeader title="Needs attention" />
+        <ThemedText variant="body" color={theme.colors.text.secondary}>
+          {open.length === 1
+            ? 'You’ve seen the one open alert. It stays with the care team until they close it — it’s on the alerts page whenever you want it.'
+            : `You’ve seen all ${open.length} open alerts. They stay with the care team until closed — they’re on the alerts page whenever you want them.`}
+        </ThemedText>
+      </View>
+    ) : null;
 
   // ---- left column: what you read ----------------------------------------
   const main = (
@@ -302,6 +337,7 @@ export default function Dashboard() {
       </TileRow>
 
       {urgent}
+      {allSeen}
 
       <Columns main={main} side={side} narrowOrder="side-first" />
     </Screen>

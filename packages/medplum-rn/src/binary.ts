@@ -8,10 +8,29 @@
  */
 import type { MedplumClient } from '@medplum/core';
 
-/** Extract the Binary id from a relative or absolute attachment URL. */
+/**
+ * Extract the Binary id from an attachment URL, in either shape Medplum uses.
+ *
+ * There are two, and only one of them was handled:
+ *
+ *   FHIR reference   Binary/f1278439-2f1b-49f7-b872-e96e34553138
+ *   presigned URL    https://storage.medplum.com/binary/<id>/<versionId>?Expires=…
+ *
+ * The second is what a *reader* actually gets. Medplum rewrites
+ * `content.attachment.url` into a short-lived presigned URL when it serves a
+ * DocumentReference, and it spells the path segment `binary` in lower case.
+ * The original pattern was case-sensitive on `Binary/`, so it matched the
+ * reference form and never the served form — which is the only form the family
+ * app ever sees.
+ */
 export function binaryIdFromUrl(url: string): string | undefined {
-  const match = /Binary\/([A-Za-z0-9\-.]{1,64})/.exec(url);
+  const match = /\bbinary\/([A-Za-z0-9\-.]{1,64})/i.exec(url);
   return match?.[1];
+}
+
+/** True for an absolute http(s) URL — i.e. a presigned link we can just GET. */
+export function isPresignedUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
 }
 
 /** Decode base64 to a UTF-8 string without atob/Buffer (pure TS). */
@@ -60,8 +79,33 @@ export function decodeBase64(base64: string): string {
   return out;
 }
 
-/** Read the text content behind a Binary attachment URL. */
+/**
+ * Read the text content behind a Binary attachment URL.
+ *
+ * A presigned URL is fetched **directly**, and deliberately first. That link
+ * is the mechanism the whole caregiver access model rests on: Medplum cannot
+ * scope `Binary` by search criteria, so family-summary content reaches a
+ * caregiver through the presigned URL attached to a DocumentReference they are
+ * allowed to read (see medplum/README.md). It carries its own signature, needs
+ * no Authorization header, and costs one round trip instead of two.
+ *
+ * The `Binary/<id>` path remains for callers holding a bare FHIR reference,
+ * and doubles as the fallback when a presigned link cannot be fetched —
+ * expired signature, or a runtime that blocks the cross-origin GET.
+ */
 export async function readBinaryText(medplum: MedplumClient, url: string): Promise<string> {
+  if (isPresignedUrl(url)) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        return await response.text();
+      }
+    } catch {
+      // Fall through to the authenticated read below rather than failing: a
+      // signature can expire, and some runtimes refuse the cross-origin GET.
+    }
+  }
+
   const id = binaryIdFromUrl(url);
   if (!id) {
     throw new Error(`Not a Binary attachment URL: ${url}`);
