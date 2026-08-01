@@ -15,6 +15,7 @@ dependencies = [
     "anthropic>=0.40",
     "websockets>=13",
     "python-dotenv>=1.0",
+    "moss>=1.7",
     "python-multipart>=0.0.9",
 ]
 

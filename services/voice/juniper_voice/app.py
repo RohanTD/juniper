@@ -33,7 +33,7 @@ from .documentation import run_post_call
 from .escalation import EscalationSink
 from .llm.provider import AnthropicProvider, LLMProvider
 from .llm_endpoint import require_bearer
-from .medplum import MedplumClient, compile_ehr_brief
+from .medplum import MedplumClient, compile_core_header, compile_patient_context
 from .preferences import Preferences, PreferencesStore
 from .session import CallRegistry
 from .terminology import Terminology, get_terminology
@@ -155,20 +155,115 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc))
         return JSONResponse(stored.model_dump(exclude_none=True))
 
+    # -- moss purge (docs/MOSS_PLAN.md: consent revocation / offboarding) ----
+    @app.post("/patients/{patient_id}/purge")
+    async def purge_patient(patient_id: str, request: Request):
+        """Delete this patient's durable Moss indexes. The operational hook for
+        consent revocation and offboarding — durable PHI storage is only
+        defensible with a working deletion path. Durable-by-intent: a failed
+        deletion is recorded and retried before the patient's indexes are ever
+        touched again, and the pending record itself blocks moss mode."""
+        # Fail CLOSED: this deletes PHI indexes keyed only on a path
+        # parameter. require_bearer is a no-op when no token is configured
+        # (fine for a local dev preferences read; not for this).
+        if not settings.api_token:
+            raise HTTPException(
+                status_code=503,
+                detail="JUNIPER_API_TOKEN must be configured to use the purge endpoint",
+            )
+        require_bearer(request, settings.api_token)
+        if settings.context_mode not in ("moss", "shadow") or not (
+            settings.moss_project_id and settings.moss_project_key
+        ):
+            # No durable indexes can exist without moss mode ever having run;
+            # still record the intent so a later moss enablement honours it.
+            from .retrieval import RetrievalStateStore
+
+            RetrievalStateStore(settings.retrieval_state_path).record_purge(
+                patient_id, completed=False
+            )
+            return JSONResponse({"purged": False, "pending": True, "reason": "moss not active"})
+        retrieval = _make_retrieval(call_id=f"purge-{patient_id}", patient_id=patient_id)
+        if retrieval is None:
+            raise HTTPException(status_code=503, detail="moss unavailable")
+        purged = await retrieval.purge_patient()
+        return JSONResponse({"purged": purged, "pending": not purged})
+
     # -- call preparation ----------------------------------------------------
+    def _make_retrieval(call_id: str, patient_id: str):
+        """Build the per-call MossRetrieval, or None when moss mode is off or
+        unconfigured. Import is local so brief mode never touches the SDK."""
+        if settings.context_mode not in ("moss", "shadow"):
+            return None
+        if not (settings.moss_project_id and settings.moss_project_key):
+            logger.error(
+                "JUNIPER_CONTEXT_MODE=%s but MOSS_PROJECT_ID/KEY unset; brief mode",
+                settings.context_mode,
+            )
+            return None
+        from .medplum import extract_chart_documents, fetch_chart_snapshot
+        from .retrieval import MossRetrieval, RetrievalStateStore
+
+        state = RetrievalStateStore(settings.retrieval_state_path)
+
+        async def chart_supplier(since: str | None = None):
+            # depth="index": the retrieval index has no token budget, so it
+            # must NOT inherit the brief's recency caps — otherwise it carries
+            # less history than the brief it replaces. `since` pushes the
+            # delta server-side so the reconciliation read is near-empty on a
+            # steady chart rather than a second full scan.
+            snapshot = await fetch_chart_snapshot(
+                medplum, patient_id, terminology, depth="index", since=since
+            )
+            return extract_chart_documents(snapshot), snapshot.read_started_at
+
+        return MossRetrieval(
+            project_id=settings.moss_project_id,
+            project_key=settings.moss_project_key,
+            patient_id=patient_id,
+            call_id=call_id,
+            chart_supplier=chart_supplier,
+            memory_supplier=lambda: context_brain.memory_documents(patient_id),
+            state=state,
+            model_id=settings.moss_model,
+            index_prefix=settings.moss_index_prefix,
+            query_timeout=settings.moss_query_timeout,
+            hydrate_timeout=settings.moss_hydrate_timeout,
+            top_k_chart=settings.moss_top_k_chart,
+            top_k_memories=settings.moss_top_k_memories,
+            top_k_session=settings.moss_top_k_session,
+            alpha=settings.moss_alpha,
+            full_rebuild_every=settings.moss_full_rebuild_every,
+        )
+
     async def prepare_call(call_id: str, patient_id: str) -> ConversationController:
         """Pre-call: consent gate (refuses to dial without ai-calling AND
-        call-recording), then compile the EHR brief and Context Brain digest
-        ONCE — both are held for the whole conversation so no FHIR round trip
-        ever lands on the per-turn latency path."""
+        call-recording), then ONE chart read compiled into the brief (and, in
+        moss mode, the core header + hydrated indexes) — all held for the
+        whole conversation so no FHIR round trip ever lands on the per-turn
+        latency path."""
         if medplum is None:
             raise RuntimeError("Medplum is not configured; cannot prepare a call")
-        brief = await compile_ehr_brief(
+        patient_context = await compile_patient_context(
             medplum,
             patient_id,
             terminology,
             token_budget=settings.ehr_brief_token_budget,
         )
+        brief = patient_context.brief
+
+        shadow = settings.context_mode == "shadow"
+        retrieval = _make_retrieval(call_id, patient_id)
+        core_header: str | None = None
+        if retrieval is not None:
+            if await retrieval.ensure_ready():
+                core_header = compile_core_header(brief, patient_context.snapshot)
+            else:
+                # Hydration failed (or a purge is pending): the patient still
+                # gets their call, with today's compiled-brief context.
+                logger.warning("moss hydration unavailable for %s; brief mode", call_id)
+                retrieval = None
+
         controller = ConversationController(
             call_id=call_id,
             patient_id=patient_id,
@@ -176,10 +271,19 @@ def create_app(
             roster=settings.roster,
             terminology=terminology,
             brief=brief,
+            # The digest stays PINNED even in moss mode. Memories are not in
+            # the core header, so dropping it meant a degraded turn lost the
+            # relationship context entirely ("granddaughter Maya started
+            # college") — not "a slightly thinner version of today", but a
+            # total loss of the thing the product exists for. Retrieval adds
+            # verbatim recall on top of it; it does not replace it.
             digest=context_brain.digest(patient_id),
             negative_constraints=context_brain.negative_constraints(patient_id),
             preferences=preferences,
             escalation=EscalationSink(notifier=escalation_notifier),
+            retrieval=retrieval,
+            core_header=core_header,
+            shadow_retrieval=shadow,
         )
         registry.register(call_id, controller)
         return controller
@@ -208,6 +312,14 @@ def create_app(
             )
         except Exception:  # noqa: BLE001
             logger.exception("post-call pass failed for %s", call_id)
+        finally:
+            # The call session is DISCARDED, never pushed — the raw transcript
+            # has exactly one durable home, and it is Medplum.
+            if controller.retrieval is not None:
+                try:
+                    await controller.retrieval.close()
+                except Exception:  # noqa: BLE001
+                    logger.exception("retrieval close failed for %s", call_id)
 
     app.state.finish_call = finish_call
 

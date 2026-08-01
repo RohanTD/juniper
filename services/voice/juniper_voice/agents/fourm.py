@@ -64,9 +64,20 @@ class FourMAgent:
         brief_text: str,
         digest: str,
         report: ReportFn,
+        probe_text: str | None = None,
     ) -> Advisory | None:
         """One slow-loop pass: report completed domains via ``report`` and
-        return the new standing advisory (or None when nothing to advise)."""
+        return the new standing advisory (or None when nothing to advise).
+
+        ``probe_text`` carries domain-targeted retrieval results in moss mode,
+        so advisories can hook into the actual record ("she was on warfarin at
+        discharge — ask about the INR checks") rather than only what the
+        transcript window happens to show."""
+        probe_block = (
+            f"Targeted retrieval for the unfilled domains:\n{probe_text}\n\n"
+            if probe_text
+            else ""
+        )
         response = await self._provider.complete(
             tag=TAG,
             model=self._model,
@@ -78,6 +89,7 @@ class FourMAgent:
                         f"Current coverage state:\n{coverage_summary}\n\n"
                         f"Clinical picture:\n{brief_text}\n\n"
                         f"What we know from past calls:\n{digest}\n\n"
+                        f"{probe_block}"
                         f"Recent conversation:\n{transcript_window_text}"
                     ),
                 }

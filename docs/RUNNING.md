@@ -24,9 +24,11 @@ npm install
 > separately (`pythonpath` in `pyproject.toml`), so a green test run does **not**
 > prove the install is usable — check `python -c "import juniper_voice"`.
 
-Then `cp services/voice/.env.example services/voice/.env` and fill it in. The Medplum
-project is **already provisioned** (see §4) — you need the client secret from the
-Medplum app, plus an Anthropic key. Deepgram and Twilio keys are only needed for §3.
+Then `cp services/voice/.env.example services/voice/.env` and fill it in. §4 below
+walks through provisioning a Medplum project — do that first, since the voice service
+needs real values (not the `.env.example` blanks) for `MEDPLUM_CLIENT_SECRET`,
+`JUNIPER_DEVICE_REFERENCE` and `JUNIPER_ORGANIZATION_REFERENCE` before it can write
+anything. You also need an Anthropic key. Deepgram and Twilio keys are only needed for §3.
 
 ## 1. The test suites — no credentials, no network
 
@@ -107,28 +109,67 @@ rather than concentrated at handoffs, which is exactly why the slow loop exists.
 stage timings are logged as structured JSON (`turn_latency`), and the budget is p95
 end-of-speech → first-audio ≤ 800ms.
 
-## 4. The Medplum project (already provisioned)
+## 4. Connecting a Medplum project
 
-The project at `https://api.medplum.com` now holds: five Juniper CodeSystems, the
-voice-agent `Device`, the pilot-clinic `Organization`, both `AccessPolicy` resources,
-and two seeded patients —
+`medplum/scripts/apply.sh` provisions everything into **whatever project the client
+credentials you give it belong to** — it is not tied to one specific project, and
+re-running it against the same project is always safe (every write is a conditional
+create or update). To point Juniper at a project:
 
-| Patient | MRN | Consent | Purpose |
-|---|---|---|---|
-| Margaret "Peggy" Alvarez, b. 1946 | `JUN-0001` | all three granted | the full-chart test patient: 6 conditions, 7 medications, 2 allergies, a fall hospitalization, an upcoming follow-up, BP/weight/PHQ-2 history |
-| Harold "Hal" Nakamura, b. 1943 | `JUN-0002` | **family-sharing withheld** | proves consent gating and caregiver isolation |
+### 4a. Get a bootstrap client (once per project)
 
-Re-running provisioning is safe — every write is a conditional create or update:
+In the Medplum app, open the target project → **Clients** → new `ClientApplication`,
+give it a name, save it — **don't** attach an AccessPolicy to its `ProjectMembership`
+yet. With no policy bound it has full project access, which is exactly what
+provisioning needs (creating CodeSystems, AccessPolicies, another ClientApplication).
+Copy its client id and secret.
+
+### 4b. Run apply.sh
 
 ```bash
-cd medplum && MEDPLUM_BASE_URL=... MEDPLUM_CLIENT_ID=... MEDPLUM_CLIENT_SECRET=... ./scripts/apply.sh
+cd medplum
+MEDPLUM_BASE_URL=https://api.medplum.com \
+MEDPLUM_CLIENT_ID=<bootstrap client id> \
+MEDPLUM_CLIENT_SECRET=<bootstrap client secret> \
+./scripts/apply.sh
 ```
 
-### Still manual
+This creates: five Juniper CodeSystems, the voice-agent `Device`, the pilot-clinic
+`Organization`, both `AccessPolicy` resources, the real `Juniper Voice Service`
+ClientApplication, and two seeded patients (Margaret "Peggy" Alvarez, MRN `JUN-0001`,
+full consent, a complete geriatric chart; Harold "Hal" Nakamura, MRN `JUN-0002`,
+**family-sharing withheld**, to exercise consent gating and caregiver isolation).
 
-- **Attach the voice-service AccessPolicy.** The `Juniper Voice Service` ClientApplication
-  exists and its credentials work, but its `ProjectMembership` has no AccessPolicy bound
-  yet, so it currently has full project access. Bind "Juniper Voice Service Policy" to it
-  in the Medplum app to make the narrow write surface real rather than merely intended.
+**Copy its final output straight into `services/voice/.env`** — it prints the exact
+`JUNIPER_DEVICE_REFERENCE` / `JUNIPER_ORGANIZATION_REFERENCE` lines for this project.
+These are real Medplum-assigned UUIDs, generated fresh on every project, and are
+*not* the identifier slugs (`Device/juniper-voice-agent`) — using a stale or
+placeholder value here means every note the service writes gets an `author`/
+`custodian` reference that resolves to nothing in this project.
+
+### 4c. Still manual after apply.sh
+
+- **Attach the voice-service AccessPolicy.** The real `Juniper Voice Service`
+  ClientApplication now exists, but its `ProjectMembership` has no AccessPolicy bound
+  yet, so it still has unrestricted project access. In the Medplum app, bind
+  "Juniper Voice Service Policy" to its membership — this is what makes the narrow
+  write surface (`Encounter`/`Binary`/`DocumentReference`/`Task` only) real rather than
+  merely intended. Then set `MEDPLUM_CLIENT_ID`/`MEDPLUM_CLIENT_SECRET` in
+  `services/voice/.env` to *this* client's id and secret, not the bootstrap one.
+
+  This step is **console-only**: `ProjectMembership` is not reachable via
+  client-credentials tokens at all (even an unrestricted client gets `403 Forbidden`
+  on `GET /ProjectMembership`), so no script can do it for you. Until it's done, the
+  "write-scope test" in `docs/PLAN.md` is unenforced — the service *behaves* correctly
+  because the code only writes those four types, but nothing on the server would stop
+  it writing more.
+- **Create a public/PKCE client for the apps.** `apply.sh` does not create this —
+  `apps/onboarding` and `apps/family` sign in as a human (patient/proxy or caregiver),
+  not as a service, so they need a browser/native OAuth client with a redirect URI
+  configured, not a client-credentials secret. In the Medplum app: Clients → new
+  ClientApplication → set its redirect URI(s) (Expo dev: `exp://127.0.0.1:8081`; the
+  app's own scheme for standalone builds, e.g. `juniper-onboarding://`; the deployed
+  URL for the web export). Its id goes in both apps'
+  `EXPO_PUBLIC_MEDPLUM_CLIENT_ID`.
 - **Invite a caregiver.** The caregiver policy is parameterized and grants nothing until
   `%patient` is bound at membership time. `medplum/README.md` has the exact invite payload.

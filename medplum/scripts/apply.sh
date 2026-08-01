@@ -88,14 +88,17 @@ api() {
   rm -f "$body_file"
 }
 
-# upsert TYPE QUERY FILE LABEL — conditional update (idempotent)
+# upsert TYPE QUERY FILE LABEL — conditional update (idempotent).
+# Sets LAST_UPSERT_ID as a side channel for callers that need the assigned id
+# (Device/Organization ids are project-specific and MUST flow into env config
+# — see the reference-id reminder below).
 upsert() {
   local type="$1" query="$2" file="$3" label="$4"
   say "Upsert $label   (PUT $type?$query)"
-  local resp id
+  local resp
   resp="$(api PUT "$FHIR/$type?$query" "$file")"
-  id="$(printf '%s' "$resp" | jget id)" || die "no id in response for $label"
-  echo "    -> $type/$id"
+  LAST_UPSERT_ID="$(printf '%s' "$resp" | jget id)" || die "no id in response for $label"
+  echo "    -> $type/$LAST_UPSERT_ID"
 }
 
 # ------------------------------------------------------------ CodeSystems
@@ -105,12 +108,21 @@ for f in "$RES"/codesystem-*.json; do
 done
 
 # ---------------------------------------------------- Device / Organization
+#
+# Medplum assigns its own UUID on create — it does NOT use the identifier
+# slug ("juniper-voice-agent") as the resource id. The service's
+# JUNIPER_DEVICE_REFERENCE / JUNIPER_ORGANIZATION_REFERENCE env vars must be
+# the real Device/<uuid> and Organization/<uuid> from THIS project, captured
+# below and printed again at the end — every fresh project gets different
+# ids, so a stale or default value silently breaks every DocumentReference
+# write (author/custodian would point at a resource that doesn't exist here).
 for pair in "Device:device-voice-agent.json" "Organization:organization-clinic.json"; do
   type="${pair%%:*}"
   f="$RES/${pair#*:}"
   sys="$(jget identifier.0.system < "$f")" || die "no identifier.system in $f"
   val="$(jget identifier.0.value < "$f")" || die "no identifier.value in $f"
   upsert "$type" "identifier=$(urlenc "$sys|$val")" "$f" "$(basename "$f")"
+  if [ "$type" = "Device" ]; then DEVICE_ID="$LAST_UPSERT_ID"; else ORGANIZATION_ID="$LAST_UPSERT_ID"; fi
 done
 
 # ------------------------------------------------------------ AccessPolicies
@@ -125,11 +137,12 @@ CLIENT_NAME="$(jget name < "$CLIENT_FILE")" || die "no name in $CLIENT_FILE"
 say "ClientApplication '$CLIENT_NAME' (create-only; an existing one is never overwritten, preserving its secret)"
 existing_id="$(api GET "$FHIR/ClientApplication?name=$(urlenc "$CLIENT_NAME")&_count=1" | jget entry.0.resource.id || true)"
 if [ -n "$existing_id" ]; then
-  echo "    already exists -> ClientApplication/$existing_id (skipped)"
+  VOICE_CLIENT_ID="$existing_id"
+  echo "    already exists -> ClientApplication/$VOICE_CLIENT_ID (skipped)"
 else
   resp="$(api POST "$FHIR/ClientApplication" "$CLIENT_FILE" "If-None-Exist: name=$(urlenc "$CLIENT_NAME")")"
-  new_id="$(printf '%s' "$resp" | jget id)" || die "no id creating ClientApplication"
-  echo "    created -> ClientApplication/$new_id"
+  VOICE_CLIENT_ID="$(printf '%s' "$resp" | jget id)" || die "no id creating ClientApplication"
+  echo "    created -> ClientApplication/$VOICE_CLIENT_ID"
 fi
 echo "    MANUAL: retrieve/rotate its secret and attach the 'Juniper Voice Service Policy'"
 echo "    to its ProjectMembership in the Medplum app — see medplum/README.md."
@@ -150,11 +163,21 @@ for f in "$SEED"/seed-bundle*.json; do
   '
 done
 
-say "Done. Remaining MANUAL steps (see medplum/README.md):"
-cat <<'EOF'
+say "Done. Set these in services/voice/.env — they are specific to THIS project:"
+cat <<EOF
+    MEDPLUM_BASE_URL=$BASE
+    JUNIPER_DEVICE_REFERENCE=Device/$DEVICE_ID
+    JUNIPER_ORGANIZATION_REFERENCE=Organization/$ORGANIZATION_ID
+EOF
+
+say "Remaining MANUAL steps (see medplum/README.md):"
+cat <<EOF
     1. Voice service: in the Medplum app, open Project -> Clients ->
-       "Juniper Voice Service", note/rotate the client secret, and set the
-       access policy on its ProjectMembership to "Juniper Voice Service Policy".
+       "Juniper Voice Service" (ClientApplication/$VOICE_CLIENT_ID), note/rotate
+       the client secret (-> MEDPLUM_CLIENT_ID/MEDPLUM_CLIENT_SECRET), and set
+       the access policy on its ProjectMembership to "Juniper Voice Service
+       Policy". Until this is done it has the same broad access as the
+       bootstrap client used to run this script.
     2. Caregiver: invite the caregiver user (admin invite endpoint) with
        membership.access binding "Juniper Caregiver Policy" and the
        parameter name "patient" pointing at the seeded Patient, then point the
@@ -162,4 +185,8 @@ cat <<'EOF'
     3. Never hand a caregiver an access binding by hand in production —
        derive it from CareTeam membership (see README, "How caregiver access
        is derived from CareTeam").
+    4. Apps (apps/onboarding, apps/family): create a separate PUBLIC/PKCE
+       ClientApplication (redirectUri set, no client secret used by the app)
+       for EXPO_PUBLIC_MEDPLUM_CLIENT_ID -- this script does not create one,
+       since it is a browser/native-flow client, not a server credential.
 EOF

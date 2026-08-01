@@ -16,6 +16,7 @@ the terminology package).
 from __future__ import annotations
 
 import base64
+import hashlib
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -298,6 +299,146 @@ class _Section:
     lines: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ChartSnapshot:
+    """One broad pre-call read of the chart — the single source both the
+    compiled brief and the chart-index documents are derived from, so the two
+    can never disagree about what was read."""
+
+    patient: dict[str, Any]
+    conditions: list[dict[str, Any]]
+    med_statements: list[dict[str, Any]]
+    med_requests: list[dict[str, Any]]
+    allergies: list[dict[str, Any]]
+    observations: list[dict[str, Any]]
+    encounters: list[dict[str, Any]]
+    appointments: list[dict[str, Any]]
+    care_plans: list[dict[str, Any]]
+    goals: list[dict[str, Any]]
+    care_teams: list[dict[str, Any]]
+    prior_notes: list[dict[str, Any]]
+    # Captured BEFORE the reads start. Capturing it after would silently and
+    # permanently lose any chart change that lands during the read window —
+    # the classic watermark race.
+    read_started_at: str
+
+
+async def fetch_chart_snapshot(
+    store: FHIRStore,
+    patient_id: str,
+    terminology: Terminology,
+    *,
+    today_iso: str | None = None,
+    now_iso: str | None = None,
+    depth: str = "brief",
+    since: str | None = None,
+) -> ChartSnapshot:
+    """One broad chart read.
+
+    ``depth="brief"`` applies the recency caps the compiled brief needs — it
+    has a token budget, so an unbounded read would only be trimmed later.
+
+    ``depth="index"`` lifts them. The retrieval index has no token ceiling, and
+    "the whole chart is indexed, twenty years of history stops being a
+    liability" is the entire justification for the integration — inheriting the
+    brief's caps would silently make the index carry LESS than the brief
+    (60 documents for a 400-observation patient), which is the opposite of the
+    claim. Historical medications are included too: at index depth the status
+    filter is dropped so superseded drugs remain findable, carrying their
+    status in metadata rather than being invisible.
+    """
+    from datetime import datetime, timezone
+
+    read_started_at = now_iso or datetime.now(timezone.utc).isoformat()
+    patient_ref = f"Patient/{patient_id}"
+    wide = depth == "index"
+
+    def params(brief_count: str, **extra: str) -> dict[str, str]:
+        out: dict[str, str] = {"patient": patient_ref}
+        # Still bounded at index depth — a page cap, not a recency filter.
+        out["_count"] = "1000" if wide else brief_count
+        if since:
+            # Server-side delta: only resources touched since the watermark
+            # come back, so the reconciliation read is near-empty on a steady
+            # chart rather than a second full scan of the record.
+            out["_lastUpdated"] = f"gt{since}"
+        out.update(extra)
+        return out
+
+    patient = await store.read("Patient", patient_id)
+
+    conditions = await store.search("Condition", params("25"))
+    med_statements = await store.search("MedicationStatement", params("25"))
+    med_requests = await store.search(
+        "MedicationRequest", params("25") if wide else params("25", status="active")
+    )
+    allergies = await store.search("AllergyIntolerance", params("100"))
+    observations = await store.search("Observation", params("30", _sort="-date"))
+    encounters = await store.search("Encounter", params("10", _sort="-date"))
+    appointment_params = params("10")
+    if today_iso:
+        appointment_params["date"] = f"ge{today_iso}"
+    appointments = await store.search("Appointment", appointment_params)
+    care_plans = await store.search("CarePlan", params("10"))
+    goals = await store.search("Goal", params("10"))
+    care_teams = await store.search("CareTeam", params("20"))
+    prior_notes = await store.search(
+        "DocumentReference",
+        {
+            "patient": patient_ref,
+            "category": terminology.note_category("note").code,
+            "_sort": "-date",
+            "_count": "3",
+        },
+    )
+    return ChartSnapshot(
+        patient=patient,
+        conditions=conditions,
+        med_statements=med_statements,
+        med_requests=med_requests,
+        allergies=allergies,
+        observations=observations,
+        encounters=encounters,
+        appointments=appointments,
+        care_plans=care_plans,
+        goals=goals,
+        care_teams=care_teams,
+        prior_notes=prior_notes,
+        read_started_at=read_started_at,
+    )
+
+
+@dataclass(frozen=True)
+class PatientContext:
+    brief: EHRBrief
+    snapshot: ChartSnapshot
+
+
+async def compile_patient_context(
+    store: FHIRStore,
+    patient_id: str,
+    terminology: Terminology,
+    *,
+    token_budget: int = 2500,
+    enforce_consent: bool = True,
+    today_iso: str | None = None,
+    now_iso: str | None = None,
+) -> PatientContext:
+    """The pre-call read: consent gate, one chart snapshot, one compiled brief.
+
+    The consent gate runs here so nothing downstream can dial without it — and
+    it runs fresh on every call, never from any cached or indexed state.
+    """
+    consent = await verify_consent(store, patient_id, terminology)
+    if enforce_consent:
+        require_dialing_consent(consent, patient_id)
+    snapshot = await fetch_chart_snapshot(
+        store, patient_id, terminology, today_iso=today_iso, now_iso=now_iso
+    )
+    brief = _compile_brief_from_snapshot(snapshot, consent, patient_id, token_budget)
+    return PatientContext(brief=brief, snapshot=snapshot)
+
+
 async def compile_ehr_brief(
     store: FHIRStore,
     patient_id: str,
@@ -308,48 +449,36 @@ async def compile_ehr_brief(
     today_iso: str | None = None,
 ) -> EHRBrief:
     """Fetch the full read table once and compile — don't concatenate — into a
-    compact digest sized to sit in context for the whole call.
+    compact digest sized to sit in context for the whole call."""
+    context = await compile_patient_context(
+        store,
+        patient_id,
+        terminology,
+        token_budget=token_budget,
+        enforce_consent=enforce_consent,
+        today_iso=today_iso,
+    )
+    return context.brief
 
-    The consent gate runs here so nothing downstream can dial without it.
-    """
-    patient_ref = f"Patient/{patient_id}"
-    consent = await verify_consent(store, patient_id, terminology)
-    if enforce_consent:
-        require_dialing_consent(consent, patient_id)
 
-    patient = await store.read("Patient", patient_id)
-
-    # Recency-filter aggressively: bounded counts, most-recent-first sorts.
-    conditions = await store.search("Condition", {"patient": patient_ref, "_count": "25"})
-    med_statements = await store.search(
-        "MedicationStatement", {"patient": patient_ref, "_count": "25"}
-    )
-    med_requests = await store.search(
-        "MedicationRequest", {"patient": patient_ref, "_count": "25", "status": "active"}
-    )
-    allergies = await store.search("AllergyIntolerance", {"patient": patient_ref})
-    observations = await store.search(
-        "Observation", {"patient": patient_ref, "_sort": "-date", "_count": "30"}
-    )
-    encounters = await store.search(
-        "Encounter", {"patient": patient_ref, "_sort": "-date", "_count": "10"}
-    )
-    appointment_params = {"patient": patient_ref, "_count": "10"}
-    if today_iso:
-        appointment_params["date"] = f"ge{today_iso}"
-    appointments = await store.search("Appointment", appointment_params)
-    care_plans = await store.search("CarePlan", {"patient": patient_ref, "_count": "10"})
-    goals = await store.search("Goal", {"patient": patient_ref, "_count": "10"})
-    care_teams = await store.search("CareTeam", {"patient": patient_ref})
-    prior_notes = await store.search(
-        "DocumentReference",
-        {
-            "patient": patient_ref,
-            "category": terminology.note_category("note").code,
-            "_sort": "-date",
-            "_count": "3",
-        },
-    )
+def _compile_brief_from_snapshot(
+    snapshot: ChartSnapshot,
+    consent: ConsentStatus,
+    patient_id: str,
+    token_budget: int,
+) -> EHRBrief:
+    patient = snapshot.patient
+    conditions = snapshot.conditions
+    med_statements = snapshot.med_statements
+    med_requests = snapshot.med_requests
+    allergies = snapshot.allergies
+    observations = snapshot.observations
+    encounters = snapshot.encounters
+    appointments = snapshot.appointments
+    care_plans = snapshot.care_plans
+    goals = snapshot.goals
+    care_teams = snapshot.care_teams
+    prior_notes = snapshot.prior_notes
 
     # -- identity ----------------------------------------------------------
     names = patient.get("name", []) or []
@@ -506,6 +635,160 @@ def _assemble_within_budget(sections: Sequence[_Section], token_budget: int) -> 
         victim.lines.pop()
         text = render(working)
     return text
+
+
+# ---------------------------------------------------------------------------
+# Chart documents + core header — the moss-mode projection of the snapshot
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ChartDocument:
+    """One chart fact as a retrieval document: a compiled line, not raw FHIR."""
+
+    id: str
+    text: str
+    metadata: dict[str, str]
+    # meta.lastUpdated when present; "" means unknown, which the delta
+    # reconciler treats as always-changed (safe: an extra upsert, never a miss).
+    last_updated: str = ""
+
+
+def _doc(resource: Mapping[str, Any], domain: str, text: str, **extra: str) -> ChartDocument:
+    rtype = str(resource.get("resourceType", "resource")).lower()
+    # Content hash, not hash(): str.__hash__ is randomised per interpreter
+    # (PYTHONHASHSEED), so a resource without an id would get a different
+    # document id in every worker process. Since the delta path only upserts
+    # and never deletes, that silently duplicates the document on each
+    # restart — and would defeat the derivable-projection property.
+    rid = str(resource.get("id") or hashlib.sha1(text.encode("utf-8")).hexdigest()[:16])
+    metadata = {"domain": domain, **{k: v for k, v in extra.items() if v}}
+    return ChartDocument(
+        id=f"{rtype}-{rid}",
+        text=text,
+        metadata=metadata,
+        last_updated=str((resource.get("meta") or {}).get("lastUpdated") or ""),
+    )
+
+
+def extract_chart_documents(snapshot: ChartSnapshot) -> list[ChartDocument]:
+    """One resource → one document. The text lines reuse the same rendering
+    the brief uses, so a fact reads identically whichever path carries it."""
+    docs: list[ChartDocument] = []
+
+    for resource in snapshot.conditions:
+        display = _coding_display(resource.get("code"))
+        if display:
+            onset = (resource.get("onsetDateTime") or "")[:10]
+            docs.append(_doc(resource, "condition", display, date=onset))
+
+    for resource in list(snapshot.med_statements) + list(snapshot.med_requests):
+        display = _medication_display(resource)
+        dosage = ""
+        dosages = resource.get("dosage") or resource.get("dosageInstruction") or []
+        if dosages and dosages[0].get("text"):
+            dosage = f" — {dosages[0]['text']}"
+        authored = (resource.get("authoredOn") or "")[:10]
+        status = str(resource.get("status") or "")
+        docs.append(
+            _doc(resource, "medication", f"{display}{dosage}", date=authored, status=status)
+        )
+
+    for resource in snapshot.allergies:
+        display = _coding_display(resource.get("code"))
+        if display:
+            docs.append(_doc(resource, "allergy", f"Allergy: {display}"))
+
+    for resource in snapshot.observations:
+        display = _coding_display(resource.get("code"))
+        if not display:
+            continue
+        when = (resource.get("effectiveDateTime") or "")[:10]
+        docs.append(
+            _doc(resource, "observation", f"{display}{_observation_value(resource)}", date=when)
+        )
+
+    for resource in snapshot.encounters:
+        period = resource.get("period", {}) or {}
+        when = (period.get("start") or "")[:10]
+        klass = (resource.get("class") or {}).get("code", "")
+        what = _coding_display((resource.get("type") or [{}])[0]) if resource.get("type") else ""
+        reason = ""
+        if resource.get("reasonCode"):
+            reason = _coding_display(resource["reasonCode"][0])
+        label = ", ".join(part for part in [what or klass, reason] if part)
+        docs.append(_doc(resource, "encounter", label or "encounter", date=when))
+
+    for resource in snapshot.appointments:
+        when = (resource.get("start") or "")[:16].replace("T", " ")
+        description = resource.get("description") or "appointment"
+        docs.append(_doc(resource, "appointment", f"Upcoming: {description}", date=when[:10]))
+
+    for resource in snapshot.goals:
+        display = _coding_display(resource.get("description"))
+        if display:
+            docs.append(_doc(resource, "goal", f"Care goal: {display}"))
+    for resource in snapshot.care_plans:
+        if resource.get("title"):
+            docs.append(_doc(resource, "goal", f"Care plan: {resource['title']}"))
+
+    for resource in snapshot.prior_notes:
+        when = (resource.get("date") or "")[:10]
+        title = ""
+        if resource.get("content"):
+            title = resource["content"][0].get("attachment", {}).get("title", "")
+        docs.append(_doc(resource, "note", f"Prior note: {title or 'Juniper note'}", date=when))
+
+    return docs
+
+
+def compile_core_header(brief: EHRBrief, snapshot: ChartSnapshot) -> str:
+    """The always-pinned core: identity, allergies, active medication NAMES.
+
+    Deliberately small and deterministic — this is the context that must never
+    be retrieval-gated (docs/MOSS_PLAN.md). Negative constraints are pinned
+    separately by the controller; consent is a code gate, not context.
+    """
+    lines: list[str] = ["## Patient"]
+    identity = brief.patient_name
+    if brief.preferred_name:
+        identity += f' (goes by "{brief.preferred_name}")'
+    birth = snapshot.patient.get("birthDate")
+    if birth:
+        identity += f", born {birth}"
+    if brief.language:
+        identity += f", speaks {brief.language}"
+    lines.append(f"- {identity}")
+
+    allergy_names = [
+        _coding_display(r.get("code")) for r in snapshot.allergies if _coding_display(r.get("code"))
+    ]
+    lines.append("## Allergies")
+    if allergy_names:
+        lines.extend(f"- {name}" for name in allergy_names)
+    else:
+        lines.append("- none recorded")
+
+    # Status filter is load-bearing, not hygiene: this block is headed
+    # "Active medications" and is the ONE medication surface the plan says
+    # must be unconditionally reliable. Pooling every MedicationStatement
+    # regardless of status presents a discontinued drug as current — a false
+    # clinical fact in the one place that is never retrieval-gated.
+    inactive = {"stopped", "completed", "entered-in-error", "cancelled", "not-taken", "on-hold"}
+    seen: set[str] = set()
+    med_names: list[str] = []
+    for resource in list(snapshot.med_statements) + list(snapshot.med_requests):
+        if str(resource.get("status") or "").lower() in inactive:
+            continue
+        display = _medication_display(resource)
+        if display and display not in seen:
+            seen.add(display)
+            med_names.append(display)
+    lines.append("## Active medications (names)")
+    if med_names:
+        lines.extend(f"- {name}" for name in med_names)
+    else:
+        lines.append("- none recorded")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
