@@ -12,6 +12,24 @@ import { Screen } from '../../src/ui/Screen';
 import { StepHeader } from '../../src/ui/StepHeader';
 import { ThemedText } from '../../src/ui/ThemedText';
 
+/**
+ * A short, non-technical cause for the failure banner.
+ *
+ * The distinction that matters to whoever is holding the phone: "we could not
+ * reach the service" (retry may work) versus "you are not allowed to do this"
+ * (retrying forever will not help). A single generic sentence hid both.
+ */
+function describeSubmitError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/network|fetch|Failed to fetch|ECONNREFUSED|Load failed/i.test(message)) {
+    return 'we could not reach the Juniper service';
+  }
+  if (/401|unauthor/i.test(message)) return 'the session has expired — please sign in again';
+  if (/403|forbidden|denied/i.test(message)) return 'this account is not allowed to save it';
+  if (/404|not found/i.test(message)) return 'the patient record could not be found';
+  return message.slice(0, 120) || 'an unexpected error occurred';
+}
+
 function SectionHeader({ title }: { title: string }) {
   const theme = useTheme();
   const recipe = theme.recipes.sectionHeader;
@@ -80,8 +98,22 @@ export default function ReviewStep() {
         toSubmitAnswers(answers)
       );
       router.replace('/steps/done');
-    } catch {
-      setErrorMessage('Something went wrong saving the setup. Nothing was lost — please try again.');
+    } catch (error) {
+      // Log the real cause. A bare `catch {}` here made every failure
+      // indistinguishable — a declined consent, an expired session and a
+      // voice service that simply wasn't running all produced the same
+      // sentence with nothing to debug from.
+      console.error('[onboarding] submit failed:', error);
+      // "Nothing was lost" is not a safe blanket claim: submitOnboarding
+      // writes Patient, RelatedPerson, CareTeam and Consent to Medplum
+      // BEFORE calling the preferences API, so a late failure leaves those
+      // already written. Re-submitting is still the right action (the FHIR
+      // writes are update-or-create keyed on the patient), but the copy must
+      // not promise something the code does not guarantee.
+      setErrorMessage(
+        `We could not finish saving the setup — ${describeSubmitError(error)}. ` +
+          'Your answers are still here; please try again.'
+      );
     } finally {
       setSubmitting(false);
     }
