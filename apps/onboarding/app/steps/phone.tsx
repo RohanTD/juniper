@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
-import { nextStepPath, subjectWord, useOnboarding } from '../../src/state';
+import { useEffect, useState } from 'react';
+import { nextStepPath, voiceFor, useOnboarding } from '../../src/state';
 import { PrimaryButton } from '../../src/ui/Buttons';
 import { Screen } from '../../src/ui/Screen';
 import { StepHeader } from '../../src/ui/StepHeader';
@@ -11,12 +11,16 @@ function isPlausiblePhone(value: string): boolean {
 }
 
 export default function PhoneStep() {
-  const { answers, update } = useOnboarding();
+  const { answers, update, completeStep } = useOnboarding();
   const [phone, setPhone] = useState(answers.phone ?? '');
-  const you = subjectWord(answers);
+  const v = voiceFor(answers);
+
+  useEffect(() => {
+    update({ phone: phone.trim() });
+  }, [phone, update]);
 
   const next = () => {
-    update({ phone: phone.trim() });
+    completeStep('/steps/phone');
     router.push(nextStepPath('/steps/phone') as string);
   };
 
@@ -24,8 +28,8 @@ export default function PhoneStep() {
     <Screen>
       <StepHeader
         step="/steps/phone"
-        title={`What number should Juniper call?`}
-        hint={`The phone ${you === 'their' ? 'the patient' : 'you'} will actually answer — a home line or cell phone both work.`}
+        title="What number should Juniper call?"
+        hint={`The phone ${v.subject} will actually answer — a home line or cell phone both work.`}
       />
       <TextField
         label="Phone number"

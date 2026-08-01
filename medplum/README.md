@@ -22,6 +22,7 @@ caregiver policy's criteria.
 | `resources/organization-clinic.json` | The pilot clinic (`DocumentReference.custodian`). |
 | `resources/access-policy-voice-service.json` | Voice service policy: broad read, writes only Encounter / Binary / DocumentReference / Task. |
 | `resources/access-policy-caregiver.json` | Parameterized read-only caregiver policy, bound per-patient at membership time. |
+| `resources/access-policy-patient-onboarding.json` | Parameterized policy for a patient completing their own setup: writes RelatedPerson / CareTeam / **Consent** only, reads their own chart. `Patient` is deliberately read-only — onboarding does not write demographics. |
 | `resources/client-application-voice.json` | ClientApplication template for the voice service. No secret committed. |
 | `seed/seed-bundle.json` | Margaret "Peggy" Alvarez — fully populated test patient (30-entry transaction). |
 | `seed/seed-bundle-second-patient.json` | Harold "Hal" Nakamura — thin second patient whose Consent withholds family-sharing. Exists to prove caregiver isolation and consent gating. |
@@ -43,6 +44,10 @@ Two non-human principals touch Medplum, and neither gets its access by
 convention — both are constrained by AccessPolicy, so the Verification items
 "write-scope test" and "caregiver access-scope test" in `docs/PLAN.md` are
 provable against the server, not against our own code's good behavior.
+
+A third policy covers the one *human* principal that writes: the patient
+completing their own onboarding. All three share the same shape — reads broad
+within a scope, writes narrow to a named list.
 
 ### Voice service — broad read, narrow write
 
@@ -145,19 +150,28 @@ participants — one writer, no second place to remember to revoke. Until that
 bot exists, the CareTeam→binding sync is procedural rather than mechanical;
 that is a residual gap listed below.
 
-#### Binary content — why the caregiver policy grants no Binary at all
+#### Binary content — why the caregiver policy grants Binary with no criteria
 
 Medplum treats `Binary` specially: it has no search parameters and cannot be
 compartment- or criteria-scoped. Access to a Binary is governed by its
 `securityContext` — the reader must have access to the resource that
 `securityContext` references. Two consequences:
 
-1. **The caregiver policy must not list `Binary`.** Family-summary content
-   still flows: when the caregiver reads the family-summary
-   `DocumentReference`, Medplum rewrites `content.attachment.url` into a
-   short-lived presigned URL, so the app fetches the text without any Binary
-   permission. A direct `GET /Binary/<id>` is additionally allowed only when
-   the securityContext resource is readable.
+1. **The caregiver policy lists `Binary` read-only, with no criteria**, and
+   relies on securityContext inheritance for scoping.
+
+   > This section previously said the opposite — "the policy must not list
+   > `Binary`; the presigned URL makes it unnecessary, and granting it would
+   > put transcript binaries one ID guess away." Verified against the live
+   > project on 2026-08-01, that reasoning was wrong in both directions.
+   > **Without** the grant, Medplum leaves `content.attachment.url` as a bare
+   > `Binary/<id>` rather than rewriting it into a presigned URL, and the
+   > family app cannot read summary text at all. **With** the grant, a direct
+   > `GET` of the clinical note's Binary still returns 404, because its
+   > securityContext points at a DocumentReference the caregiver cannot read.
+   > Scoping comes from securityContext, not from the presence of the entry.
+
+   `check.mjs` asserts the grant is present for exactly this reason.
 2. **Write contract for the voice service (normative):** every `Binary` it
    creates MUST set `securityContext` to its owning `DocumentReference` —
    *not* to the Patient. If a transcript Binary's securityContext pointed at
@@ -256,6 +270,47 @@ two steps into one in production.
 Repeat for Kenji with `Patient/<id of JUN-0002>` to run the isolation tests:
 logged in as Kenji, Peggy's records must all 403/404; logged in as Carmen,
 Hal's must.
+
+### Manual step 3 — bind the patient onboarding policy
+
+**Every patient who will sign in to `apps/onboarding` needs this, and the
+symptom of forgetting is delayed and confusing.** Medplum's built-in *Default
+Patient Access Policy* grants `Patient`, `RelatedPerson` and `CareTeam` but has
+**no `Consent` entry**, and Medplum is default-deny. A patient on the stock
+policy therefore answers all thirteen onboarding screens, presses "Finish
+setup", and gets `Forbidden` — at the one write that cannot be skipped, since
+the entire voice system is consent-gated.
+
+On the patient's `ProjectMembership`, replace the stock policy with a binding
+to **Juniper Patient Onboarding Policy**, parameterized on their own Patient:
+
+```json
+{
+  "access": [
+    {
+      "policy": { "reference": "AccessPolicy/<id of Juniper Patient Onboarding Policy>" },
+      "parameter": [
+        { "name": "patient", "valueReference": { "reference": "Patient/<their id>" } }
+      ]
+    }
+  ]
+}
+```
+
+The parameter name must be `patient` — the policy's `compartment` and every
+`criteria` resolve `%patient` from it, so an unparameterized binding grants
+nothing rather than granting everything.
+
+Two operational notes:
+
+- **The token is stale until re-login.** Policy changes do not apply to an
+  already-issued access token. Sign out and back in, or the same `Forbidden`
+  persists against a policy that is now correct.
+- Verify with the patient's own credentials: `POST /fhir/R4/Consent` for
+  themselves must succeed, `POST /fhir/R4/Observation` must return 403,
+  `PUT /fhir/R4/Patient/<their own id>` must return 403 (demographics are the
+  clinic's, not the app's — see docs/CONTRACTS.md §3), and
+  `GET /fhir/R4/Patient/<another patient's id>` must 404.
 
 ## Seed data
 

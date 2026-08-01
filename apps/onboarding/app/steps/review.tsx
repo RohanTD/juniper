@@ -5,7 +5,12 @@ import { useState } from 'react';
 import { View } from 'react-native';
 import { ENV } from '../../src/env';
 import { PreferencesClient } from '../../src/preferences';
-import { missingAnswers, toSubmitAnswers, useOnboarding } from '../../src/state';
+import {
+  familyContactForSubmit,
+  missingAnswers,
+  toSubmitAnswers,
+  useOnboarding,
+} from '../../src/state';
 import { submitOnboarding, type OnboardingFhirClient } from '../../src/submit';
 import { PrimaryButton } from '../../src/ui/Buttons';
 import { Screen } from '../../src/ui/Screen';
@@ -67,11 +72,12 @@ export default function ReviewStep() {
   const theme = useTheme();
   const medplum = useMedplum();
   const profile = useMedplumProfile();
-  const { answers } = useOnboarding();
+  const { answers, clearDraftAfterSubmit } = useOnboarding();
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>();
 
   const missing = missingAnswers(answers);
+  const familyContact = familyContactForSubmit(answers);
   const patientId =
     answers.patientId ?? (profile?.resourceType === 'Patient' ? profile.id : undefined);
 
@@ -91,11 +97,17 @@ export default function ReviewStep() {
         baseUrl: ENV.voiceApiUrl,
         token: ENV.voiceApiToken,
       });
-      await submitOnboarding(
-        medplum as unknown as OnboardingFhirClient,
-        preferencesApi,
-        patientId,
-        toSubmitAnswers(answers)
+      // The saved draft is deleted only once the submit resolves — never in a
+      // `finally`, and never before. See src/draft.ts: the FHIR writes land
+      // before the preferences call, so a late failure must leave the answers
+      // in place for the retry that finishes the job.
+      await clearDraftAfterSubmit(() =>
+        submitOnboarding(
+          medplum as unknown as OnboardingFhirClient,
+          preferencesApi,
+          patientId,
+          toSubmitAnswers(answers)
+        )
       );
       router.replace('/steps/done');
     } catch (error) {
@@ -112,7 +124,8 @@ export default function ReviewStep() {
       // not promise something the code does not guarantee.
       setErrorMessage(
         `We could not finish saving the setup — ${describeSubmitError(error)}. ` +
-          'Your answers are still here; please try again.'
+          'Your answers are saved on this device, so nothing is lost — please try ' +
+          'again now, or reopen your link later and press Finish setup.'
       );
     } finally {
       setSubmitting(false);
@@ -143,6 +156,10 @@ export default function ReviewStep() {
         }
       />
       <Row
+        label="Enjoys"
+        value={answers.interests.length > 0 ? answers.interests.join('; ') : 'Not said'}
+      />
+      <Row
         label="Topics to avoid"
         value={answers.topicsToAvoid.length > 0 ? answers.topicsToAvoid.join('; ') : 'None'}
       />
@@ -150,11 +167,7 @@ export default function ReviewStep() {
       <SectionHeader title="Family" />
       <Row
         label="Family contact"
-        value={
-          answers.familyContact
-            ? `${answers.familyContact.name} (${answers.familyContact.relationship})`
-            : 'None'
-        }
+        value={familyContact ? `${familyContact.name} (${familyContact.relationship})` : 'None'}
       />
 
       <SectionHeader title="Permissions" />

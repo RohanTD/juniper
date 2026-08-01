@@ -1,6 +1,6 @@
 import { useTheme } from '@juniper/theme';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { nextStepPath, useOnboarding } from '../../src/state';
 import { PrimaryButton } from '../../src/ui/Buttons';
@@ -11,7 +11,7 @@ import { TextField } from '../../src/ui/TextField';
 
 export default function WhoStep() {
   const theme = useTheme();
-  const { answers, update } = useOnboarding();
+  const { answers, update, completeStep } = useOnboarding();
   const [role, setRole] = useState<'patient' | 'proxy'>(answers.completedBy.role);
   const [proxyName, setProxyName] = useState(
     answers.completedBy.role === 'proxy' ? answers.completedBy.name : ''
@@ -20,15 +20,21 @@ export default function WhoStep() {
     answers.completedBy.role === 'proxy' ? answers.completedBy.relationship : ''
   );
 
-  const ready = role === 'patient' || (proxyName.trim() !== '' && proxyRelationship.trim() !== '');
-
-  const next = () => {
+  // Write through to the draft as it is typed, not on Continue — a call
+  // arriving mid-answer should cost at most the last word, never the screen.
+  useEffect(() => {
     update({
       completedBy:
         role === 'patient'
           ? { role: 'patient' }
           : { role: 'proxy', name: proxyName.trim(), relationship: proxyRelationship.trim() },
     });
+  }, [role, proxyName, proxyRelationship, update]);
+
+  const ready = role === 'patient' || (proxyName.trim() !== '' && proxyRelationship.trim() !== '');
+
+  const next = () => {
+    completeStep('/steps/who');
     router.push(nextStepPath('/steps/who') as string);
   };
 

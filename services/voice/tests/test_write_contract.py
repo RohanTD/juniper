@@ -181,7 +181,10 @@ async def test_escalation_task_shape(medplum, terminology):
         actions_taken=("the companion addressed the concern directly during the call",),
     )
     tasks = sink.build_tasks(
-        terminology=terminology, device_ref=DEVICE_REF, owner_ref="Practitioner/pcp-1"
+        terminology=terminology,
+        device_ref=DEVICE_REF,
+        owner_ref="Practitioner/pcp-1",
+        owner_display="Dr. Amara Osei",
     )
     result = await _write(medplum, terminology, tasks=tasks)
 
@@ -192,7 +195,13 @@ async def test_escalation_task_shape(medplum, terminology):
     assert task["for"] == {"reference": "Patient/pat-1"}
     assert task["encounter"] == {"reference": f"Encounter/{result.encounter_id}"}
     assert task["requester"] == {"reference": DEVICE_REF}
-    assert task["owner"] == {"reference": "Practitioner/pcp-1"}
+    # The display is the only way the family app can name who the alert went
+    # to: the caregiver AccessPolicy grants neither CareTeam nor Practitioner,
+    # so a bare reference resolves to nothing on their side.
+    assert task["owner"] == {
+        "reference": "Practitioner/pcp-1",
+        "display": "Dr. Amara Osei",
+    }
 
     coding = task["code"]["coding"][0]
     assert coding["code"] == "juniper-escalation"

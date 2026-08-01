@@ -200,6 +200,29 @@ def require_dialing_consent(consent: ConsentStatus, patient_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
+class CareTeamMember:
+    """One CareTeam participant, carrying the human-readable label with it.
+
+    The label matters outside the brief.  ``Task.owner`` on an escalation is
+    the only place a caregiver can learn *who* their 11pm alert went to, and
+    the caregiver AccessPolicy does not grant ``CareTeam`` or ``Practitioner``
+    — so a bare ``{"reference": "Practitioner/abc"}`` renders as nothing at
+    all on their side.  ``Reference.display`` is denormalised precisely for
+    this case in FHIR: it survives where the referenced resource is unreadable.
+    """
+
+    reference: str
+    display: str | None = None
+    role: str | None = None
+
+    def as_reference(self) -> dict[str, str]:
+        ref: dict[str, str] = {"reference": self.reference}
+        if self.display:
+            ref["display"] = self.display
+        return ref
+
+
+@dataclass(frozen=True)
 class EHRBrief:
     text: str
     patient_id: str
@@ -208,9 +231,14 @@ class EHRBrief:
     language: str | None
     phone: str | None
     consent: ConsentStatus
-    care_team_refs: tuple[str, ...]
+    care_team: tuple[CareTeamMember, ...]
     prior_notes: tuple[dict[str, Any], ...]
     token_estimate: int
+
+    @property
+    def care_team_refs(self) -> tuple[str, ...]:
+        """Bare references, for callers that only need identity."""
+        return tuple(member.reference for member in self.care_team)
 
 
 def estimate_tokens(text: str) -> int:
@@ -444,11 +472,17 @@ async def compile_patient_context(
     enforce_consent: bool = True,
     today_iso: str | None = None,
     now_iso: str | None = None,
+    enrollment: Mapping[str, Any] | None = None,
 ) -> PatientContext:
     """The pre-call read: consent gate, one chart snapshot, one compiled brief.
 
     The consent gate runs here so nothing downstream can dial without it — and
     it runs fresh on every call, never from any cached or indexed state.
+
+    ``enrollment`` is what the patient told Juniper at onboarding, from the
+    app-level preferences store.  It is passed in rather than fetched here so
+    this module keeps its single job — FHIR — and so a caller that has no
+    preferences store still gets a working brief from the chart alone.
     """
     consent = await verify_consent(store, patient_id, terminology)
     if enforce_consent:
@@ -456,7 +490,9 @@ async def compile_patient_context(
     snapshot = await fetch_chart_snapshot(
         store, patient_id, terminology, today_iso=today_iso, now_iso=now_iso
     )
-    brief = _compile_brief_from_snapshot(snapshot, consent, patient_id, token_budget)
+    brief = _compile_brief_from_snapshot(
+        snapshot, consent, patient_id, token_budget, enrollment
+    )
     return PatientContext(brief=brief, snapshot=snapshot)
 
 
@@ -468,6 +504,7 @@ async def compile_ehr_brief(
     token_budget: int = 2500,
     enforce_consent: bool = True,
     today_iso: str | None = None,
+    enrollment: Mapping[str, Any] | None = None,
 ) -> EHRBrief:
     """Fetch the full read table once and compile — don't concatenate — into a
     compact digest sized to sit in context for the whole call."""
@@ -478,8 +515,90 @@ async def compile_ehr_brief(
         token_budget=token_budget,
         enforce_consent=enforce_consent,
         today_iso=today_iso,
+        enrollment=enrollment,
     )
     return context.brief
+
+
+def _resolve_identity(
+    *,
+    patient_id: str,
+    chart_name: str | None,
+    chart_preferred: str | None,
+    chart_phone: str | None,
+    chart_language: str | None,
+    chart_birth_date: str | None,
+    enrollment: Mapping[str, Any] | None,
+) -> tuple[str, str | None, str | None, str | None, str | None, list[str]]:
+    """Reconcile the chart with what the patient told Juniper at onboarding.
+
+    Onboarding deliberately does **not** write ``Patient`` — the clinic owns
+    its demographics, and a phone handed to an eighty-year-old is not an
+    authority to rewrite a legal name or the practice's number of record.  So
+    two sources exist and they can disagree.  The split:
+
+    * **Operational fields — enrollment wins.**  ``phone`` is the number
+      Juniper dials, ``preferredName`` is what Juniper calls them, ``language``
+      is the language Juniper speaks.  These are facts about *our* interaction,
+      given to us directly and more recently than the chart, and a mobile
+      number the practice never got told is the single most likely
+      disagreement.  Dialing the stale one means not reaching the patient at
+      all.
+    * **Identity fields — the chart wins.**  Legal name and date of birth
+      identify the person to their clinicians; enrollment only fills them in
+      when the chart has none (a record created by an admin and never
+      completed).
+    * **Disagreements are reported, never silently resolved.**  Every
+      substituted value adds a line to the brief.
+
+    Returns ``(name, preferred, phone, language, birth_date, conflict_lines)``.
+    """
+    enrollment = enrollment or {}
+    conflicts: list[str] = []
+
+    def _clean(value: Any) -> str | None:
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    enrolled_preferred = _clean(enrollment.get("preferredName"))
+    enrolled_phone = _clean(enrollment.get("phone"))
+    enrolled_birth_date = _clean(enrollment.get("birthDate"))
+    language_block = enrollment.get("language") or {}
+    enrolled_language = _clean(
+        language_block.get("label") if isinstance(language_block, Mapping) else None
+    )
+    name_block = enrollment.get("legalName") or {}
+    enrolled_name = None
+    if isinstance(name_block, Mapping):
+        parts = [_clean(name_block.get("given")), _clean(name_block.get("family"))]
+        enrolled_name = " ".join(p for p in parts if p) or None
+
+    # Operational: enrollment wins, and a difference is worth saying out loud.
+    phone = enrolled_phone or chart_phone
+    if enrolled_phone and chart_phone and enrolled_phone != chart_phone:
+        conflicts.append(
+            f"Calling {enrolled_phone} — the number given at signup. "
+            f"The chart still lists {chart_phone}."
+        )
+    preferred = enrolled_preferred or chart_preferred
+    if enrolled_preferred and chart_preferred and enrolled_preferred != chart_preferred:
+        conflicts.append(
+            f'Goes by "{enrolled_preferred}" (the chart says "{chart_preferred}").'
+        )
+    language = enrolled_language or chart_language
+    if enrolled_language and chart_language and enrolled_language != chart_language:
+        conflicts.append(
+            f"Prefers {enrolled_language}; the chart records {chart_language}."
+        )
+
+    # Identity: the chart wins, enrollment only fills a gap.
+    patient_name = chart_name or enrolled_name or patient_id
+    if chart_name and enrolled_name and chart_name != enrolled_name:
+        conflicts.append(f'Gave their name at signup as "{enrolled_name}".')
+    birth_date = chart_birth_date or enrolled_birth_date
+    if chart_birth_date and enrolled_birth_date and chart_birth_date != enrolled_birth_date:
+        conflicts.append(f"Gave their date of birth at signup as {enrolled_birth_date}.")
+
+    return patient_name, preferred, phone, language, birth_date, conflicts
 
 
 def _compile_brief_from_snapshot(
@@ -487,6 +606,7 @@ def _compile_brief_from_snapshot(
     consent: ConsentStatus,
     patient_id: str,
     token_budget: int,
+    enrollment: Mapping[str, Any] | None = None,
 ) -> EHRBrief:
     patient = snapshot.patient
     conditions = snapshot.conditions
@@ -505,22 +625,47 @@ def _compile_brief_from_snapshot(
     names = patient.get("name", []) or []
     legal = next((n for n in names if n.get("use") != "nickname"), {})
     nickname = next((n for n in names if n.get("use") == "nickname"), None)
-    patient_name = _human_name(legal) if legal else patient_id
-    preferred = _human_name(nickname) if nickname else None
-    phone = next(
+    chart_name = _human_name(legal) if legal else None
+    chart_preferred = _human_name(nickname) if nickname else None
+    chart_phone = next(
         (t.get("value") for t in patient.get("telecom", []) or [] if t.get("system") == "phone"),
         None,
     )
-    language = None
+    chart_language = None
     for communication in patient.get("communication", []) or []:
-        language = _coding_display(communication.get("language")) or language
+        chart_language = _coding_display(communication.get("language")) or chart_language
+    chart_birth_date = patient.get("birthDate")
 
-    care_team_refs: list[str] = []
+    patient_name, preferred, phone, language, birth_date, identity_conflicts = _resolve_identity(
+        patient_id=patient_id,
+        chart_name=chart_name,
+        chart_preferred=chart_preferred,
+        chart_phone=chart_phone,
+        chart_language=chart_language,
+        chart_birth_date=chart_birth_date,
+        enrollment=enrollment,
+    )
+
+    care_team: list[CareTeamMember] = []
+    seen_refs: set[str] = set()
     for team in care_teams:
         for participant in team.get("participant", []) or []:
-            ref = (participant.get("member") or {}).get("reference")
-            if ref:
-                care_team_refs.append(ref)
+            member = participant.get("member") or {}
+            ref = member.get("reference")
+            # A patient on two CareTeams (clinic + home health) lists the same
+            # PCP twice; escalation picks care_team[0] and the brief prints the
+            # roster, so the duplicate would be visible in both.
+            if not ref or ref in seen_refs:
+                continue
+            seen_refs.add(ref)
+            care_team.append(
+                CareTeamMember(
+                    reference=ref,
+                    display=member.get("display"),
+                    role=_coding_display(next(iter(participant.get("role") or []), None))
+                    or None,
+                )
+            )
 
     # -- sections (priority: lower number survives budget pressure longer) --
     sections: list[_Section] = []
@@ -529,9 +674,15 @@ def _compile_brief_from_snapshot(
     identity.lines.append(
         f"{patient_name}"
         + (f' (goes by "{preferred}")' if preferred else "")
-        + (f", born {patient['birthDate']}" if patient.get("birthDate") else "")
+        + (f", born {birth_date}" if birth_date else "")
         + (f", speaks {language}" if language else "")
     )
+    # A disagreement between the chart and what the patient told Juniper is
+    # itself clinical signal — a number changed and nobody told the practice,
+    # or a name the chart never learned.  Silently preferring one would throw
+    # that away, so it rides along in the highest-priority section, where the
+    # token budget cannot trim it.
+    identity.lines.extend(identity_conflicts)
     sections.append(identity)
 
     meds = _Section(1, "Medications")
@@ -622,7 +773,7 @@ def _compile_brief_from_snapshot(
         language=language,
         phone=phone,
         consent=consent,
-        care_team_refs=tuple(care_team_refs),
+        care_team=tuple(care_team),
         prior_notes=tuple(prior_notes),
         token_estimate=estimate_tokens(text),
     )
@@ -912,6 +1063,139 @@ def _document_reference(
             }
         ]
     return resource
+
+
+async def read_recent_note_texts(
+    store: FHIRStore,
+    terminology: Terminology,
+    patient_id: str,
+    *,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    """Recent Juniper notes, with their text, newest first.
+
+    Only this service ever calls it: the caregiver AccessPolicy hides
+    ``juniper-note`` outright, so the family app could not assemble this even
+    if it wanted to.  That is exactly why guidance is generated here.
+
+    Runs post-call, off the turn's critical path — it is N+1 round trips by
+    construction (a search, then one Binary read each) and has no business
+    anywhere near the latency budget.
+    """
+    category = terminology.note_category("note")
+    documents = await store.search(
+        "DocumentReference",
+        {
+            "subject": f"Patient/{patient_id}",
+            "category": f"{category.system}|{category.code}",
+            "_sort": "-date",
+            "_count": str(limit),
+        },
+    )
+    out: list[dict[str, Any]] = []
+    for document in documents[:limit]:
+        url = ((document.get("content") or [{}])[0].get("attachment") or {}).get("url") or ""
+        text = ""
+        if url.startswith("Binary/"):
+            try:
+                binary = await store.read("Binary", url.split("/", 1)[1])
+                raw = binary.get("data")
+                if raw:
+                    text = base64.b64decode(raw).decode("utf-8", errors="replace")
+            except MedplumError:
+                # One unreadable note must not sink the whole pass; guidance is
+                # a nicety and degrades to "less evidence", never to a failure.
+                text = ""
+        if text:
+            out.append({"date": (document.get("date") or "")[:10], "text": text})
+    return out
+
+
+async def write_family_guidance(
+    store: FHIRStore,
+    terminology: Terminology,
+    *,
+    patient_id: str,
+    guidance_json: str,
+    date_iso: str,
+    device_ref: str,
+    organization_ref: str | None,
+) -> dict[str, str]:
+    """Write the family guidance document.
+
+    Two shape decisions worth stating:
+
+    * **No ``context.encounter``.**  Every other document this service writes
+      is about one call.  Guidance is about a *run* of calls — attaching it to
+      the most recent one would misdate it and make "everything from this call"
+      queries return something that is not from that call.
+    * **Replaces, rather than accumulating.**  Guidance is a current view, not
+      a history; a caregiver opening the dashboard must see one list, not
+      fourteen weekly ones stacked up. The previous document is superseded.
+
+    Stays inside the locked write surface: ``Binary`` + ``DocumentReference``
+    and nothing else.
+    """
+    binary_ref = f"urn:uuid:{uuid.uuid4()}"
+    doc_ref = f"urn:uuid:{uuid.uuid4()}"
+    guidance_coding = terminology.note_category("familyGuidance")
+    resource: dict[str, Any] = {
+        "resourceType": "DocumentReference",
+        "status": "current",
+        "docStatus": terminology.doc_status_initial,
+        "type": terminology.note_type.as_codeable_concept(),
+        "category": [guidance_coding.as_codeable_concept()],
+        "subject": {"reference": f"Patient/{patient_id}"},
+        "date": date_iso,
+        "author": [{"reference": device_ref}],
+        "content": [
+            {
+                "attachment": {
+                    "contentType": "application/json",
+                    "url": binary_ref,
+                    "title": "Juniper family guidance",
+                }
+            }
+        ],
+    }
+    if organization_ref:
+        resource["custodian"] = {"reference": organization_ref}
+
+    entries = [
+        {
+            "fullUrl": binary_ref,
+            "resource": {
+                "resourceType": "Binary",
+                "contentType": "application/json",
+                "securityContext": {"reference": doc_ref},
+                "data": base64.b64encode(guidance_json.encode("utf-8")).decode("ascii"),
+            },
+            "request": {"method": "POST", "url": "Binary"},
+        },
+        {
+            "fullUrl": doc_ref,
+            "resource": resource,
+            # Conditional update: one current guidance document per patient.
+            "request": {
+                "method": "PUT",
+                "url": (
+                    "DocumentReference?subject=Patient/"
+                    f"{patient_id}&category={guidance_coding.system}|{guidance_coding.code}"
+                ),
+            },
+        },
+    ]
+    response = await store.transaction(
+        {"resourceType": "Bundle", "type": "transaction", "entry": entries}
+    )
+    resolved = {
+        sent["fullUrl"]: received.get("resource") or {}
+        for sent, received in zip(entries, response.get("entry", []))
+    }
+    return {
+        "document_id": resolved[doc_ref].get("id", ""),
+        "binary_id": resolved[binary_ref].get("id", ""),
+    }
 
 
 async def write_post_call(

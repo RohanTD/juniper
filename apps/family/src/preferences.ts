@@ -4,6 +4,7 @@
  * provenance have no FHIR home; they live in the voice service's app-level
  * store so the Companion can change them by voice later.
  */
+import { VoiceApiClient, VoiceApiError, type VoiceApiOptions } from './voiceApi';
 
 export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 
@@ -24,76 +25,79 @@ export type CompletedBy =
   | { role: 'patient' }
   | { role: 'proxy'; name: string; relationship: string };
 
+/**
+ * What the patient told Juniper at setup — legal name, birth date, the number
+ * to dial, preferred name, language. Never written to the FHIR `Patient`: the
+ * chart's demographics belong to the clinic, so Juniper keeps its own copy for
+ * its own purposes.
+ *
+ * The family app neither renders nor edits this. It is here only so a
+ * get → edit → put round-trip on the call-settings screen carries it back
+ * untouched. (The service also preserves it when a body omits it, so a client
+ * cannot delete the dial number by staying quiet — belt and braces, because
+ * losing it means the patient stops being called at all.)
+ */
+export interface EnrollmentProfile {
+  legalName?: { given: string; family: string };
+  preferredName?: string;
+  /** ISO date YYYY-MM-DD. */
+  birthDate?: string;
+  /** The number Juniper dials. */
+  phone?: string;
+  language?: { code: string; label: string };
+}
+
 export interface PatientPreferences {
   callWindows: CallWindow[];
   topicsToAvoid: string[];
+  /**
+   * What the patient enjoys. The counterpart to `topicsToAvoid`: that list is
+   * a prohibition the compassion filter enforces, this one is an invitation
+   * the Companion opens with. Kept here rather than in FHIR for the same
+   * reason as the rest of this file — there is no FHIR home for "loves the
+   * Sunday crossword", and inventing one would put non-clinical state into the
+   * clinical record.
+   */
+  interests?: string[];
   completedBy: CompletedBy;
+  enrollment?: EnrollmentProfile;
 }
 
-export class PreferencesApiError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string
-  ) {
-    super(message);
+/**
+ * Retained as a distinct type so existing `instanceof` checks keep working;
+ * the behaviour lives on VoiceApiError, which the acknowledgements client
+ * shares.
+ */
+export class PreferencesApiError extends VoiceApiError {
+  constructor(status: number, message: string) {
+    super(status, message);
     this.name = 'PreferencesApiError';
   }
 }
 
-export interface PreferencesClientOptions {
-  /** Voice service base URL. */
-  baseUrl: string;
-  /** JUNIPER_API_TOKEN bearer token. */
-  token: string;
-  /** Injectable for tests. */
-  fetchImpl?: typeof fetch;
-}
+export type PreferencesClientOptions = VoiceApiOptions;
 
-export class PreferencesClient {
-  private readonly baseUrl: string;
-  private readonly token: string;
-  private readonly fetchImpl: typeof fetch;
-
-  constructor(options: PreferencesClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
-    this.token = options.token;
-    this.fetchImpl = options.fetchImpl ?? fetch;
-  }
-
+export class PreferencesClient extends VoiceApiClient {
   private url(patientId: string): string {
-    return `${this.baseUrl}/patients/${encodeURIComponent(patientId)}/preferences`;
-  }
-
-  private headers(): Record<string, string> {
-    return {
-      Authorization: `Bearer ${this.token}`,
-      'Content-Type': 'application/json',
-    };
+    return this.patientUrl(patientId, 'preferences');
   }
 
   async getPreferences(patientId: string): Promise<PatientPreferences> {
-    const response = await this.fetchImpl(this.url(patientId), {
-      method: 'GET',
-      headers: this.headers(),
-    });
-    if (!response.ok) {
-      throw new PreferencesApiError(response.status, `GET preferences failed: ${response.status}`);
-    }
-    return (await response.json()) as PatientPreferences;
+    return this.request<PatientPreferences>(
+      this.url(patientId),
+      { method: 'GET' },
+      'GET preferences'
+    );
   }
 
   async putPreferences(
     patientId: string,
     preferences: PatientPreferences
   ): Promise<PatientPreferences> {
-    const response = await this.fetchImpl(this.url(patientId), {
-      method: 'PUT',
-      headers: this.headers(),
-      body: JSON.stringify(preferences),
-    });
-    if (!response.ok) {
-      throw new PreferencesApiError(response.status, `PUT preferences failed: ${response.status}`);
-    }
-    return (await response.json()) as PatientPreferences;
+    return this.request<PatientPreferences>(
+      this.url(patientId),
+      { method: 'PUT', body: JSON.stringify(preferences) },
+      'PUT preferences'
+    );
   }
 }

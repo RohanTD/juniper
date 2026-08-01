@@ -89,6 +89,43 @@ export function checkInSubtitle(encounter: Encounter): string {
   return minutes === undefined ? `${day} at ${time}` : `${day} at ${time} · ${minutes} min`;
 }
 
+/**
+ * Count of check-ins in `now`'s calendar month.
+ *
+ * A count, deliberately, not a trend: with writes limited to notes there is no
+ * structured data to plot, and a sparkline over an encounter count would be a
+ * chart of how often the phone rang dressed up as a chart of how someone is
+ * doing.
+ */
+export function callsThisMonth(encounters: Encounter[], now: Date = new Date()): number {
+  return encounters.filter((encounter) => {
+    const date = encounterDate(encounter);
+    return (
+      date !== undefined &&
+      date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth()
+    );
+  }).length;
+}
+
+/** "Yesterday" / "3 days ago" / "July 12" — the bare relative phrase for a tile. */
+export function relativeDayPhrase(date: Date | undefined, now: Date = new Date()): string {
+  if (!date) {
+    return 'None yet';
+  }
+  const days = Math.floor((now.getTime() - date.getTime()) / 86_400_000);
+  if (days <= 0) {
+    return 'Today';
+  }
+  if (days === 1) {
+    return 'Yesterday';
+  }
+  if (days < 7) {
+    return `${days} days ago`;
+  }
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 /** Short relative phrasing for the summary screen. */
 export function lastCheckInPhrase(encounters: Encounter[]): string {
   const latest = encounters.map(encounterDate).find((d): d is Date => d !== undefined);

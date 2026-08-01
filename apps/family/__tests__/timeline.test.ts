@@ -4,12 +4,14 @@
 import type { Encounter } from '@medplum/fhirtypes';
 
 import {
+  callsThisMonth,
   checkInSubtitle,
   durationMinutes,
   encounterDate,
   groupEncountersByMonth,
   lastCheckInPhrase,
   monthKey,
+  relativeDayPhrase,
 } from '../src/data/timeline';
 
 function encounter(start?: string, end?: string): Encounter {
@@ -86,6 +88,45 @@ describe('checkInSubtitle', () => {
     expect(checkInSubtitle(encounter('2026-07-28T09:00:00Z', '2026-07-28T09:12:00Z'))).toContain(
       '12 min'
     );
+  });
+});
+
+describe('callsThisMonth', () => {
+  // A count, not a trend — the stat tile is a fact the app holds, and PLAN.md
+  // rules out plotting anything until the phase-2 Observation writes land.
+  const now = new Date('2026-07-20T12:00:00Z');
+
+  it('counts only the calendar month `now` falls in', () => {
+    expect(
+      callsThisMonth(
+        [
+          encounter('2026-07-18T09:00:00Z'),
+          encounter('2026-07-04T09:00:00Z'),
+          encounter('2026-06-30T09:00:00Z'),
+        ],
+        now
+      )
+    ).toBe(2);
+  });
+
+  it('ignores undated encounters instead of counting them as this month', () => {
+    expect(callsThisMonth([encounter()], now)).toBe(0);
+    expect(callsThisMonth([], now)).toBe(0);
+  });
+});
+
+describe('relativeDayPhrase', () => {
+  const now = new Date('2026-07-20T12:00:00Z');
+
+  it('uses relative phrasing inside a week and an absolute date beyond it', () => {
+    expect(relativeDayPhrase(new Date('2026-07-20T09:00:00Z'), now)).toBe('Today');
+    expect(relativeDayPhrase(new Date('2026-07-19T09:00:00Z'), now)).toBe('Yesterday');
+    expect(relativeDayPhrase(new Date('2026-07-17T09:00:00Z'), now)).toBe('3 days ago');
+    expect(relativeDayPhrase(new Date('2026-06-12T09:00:00Z'), now)).toMatch(/^\w+ \d+$/);
+  });
+
+  it('says so plainly when there is nothing to describe', () => {
+    expect(relativeDayPhrase(undefined, now)).toBe('None yet');
   });
 });
 

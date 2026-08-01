@@ -1,12 +1,31 @@
 /**
- * The serif-display-plus-mono-eyebrow signature. Used on exactly ONE screen —
- * the "how is Mom doing" summary — per the theme's rule. Do not reuse.
+ * The theme's signature pairing: a tracked uppercase mono eyebrow above an
+ * Instrument Serif display line (THEME_SYSTEM.md §3, "the serif/mono contrast").
+ *
+ * The spec reserves it for "big moment" screens, and this app has exactly two:
+ * the landing screen, which is the first thing anyone sees and where the
+ * Juniper identity has to land, and the dashboard's "how is <name> doing?" —
+ * the one question the product exists to answer. Nothing else in the app may
+ * use it; a signature used everywhere signifies nothing.
+ *
+ * `size` exists because the two moments are different sizes of moment: the
+ * landing screen carries the 64pt `displayLarge` on a wide viewport, the
+ * dashboard the 48pt `display`.
  */
 import { useTheme } from '@juniper/theme';
+import type { ReactNode } from 'react';
 import { View } from 'react-native';
 import { ThemedText } from './ThemedText';
 
-export function Hero({ eyebrow, title }: { eyebrow: string; title: string }) {
+export interface HeroProps {
+  eyebrow: string;
+  title: string;
+  size?: 'display' | 'displayLarge';
+  /** Status row, lede paragraph, call to action — whatever the moment needs. */
+  children?: ReactNode;
+}
+
+export function Hero({ eyebrow, title, size = 'display', children }: HeroProps) {
   const theme = useTheme();
   const recipe = theme.recipes.hero;
   return (
@@ -14,9 +33,10 @@ export function Hero({ eyebrow, title }: { eyebrow: string; title: string }) {
       <ThemedText variant="label" color={recipe.eyebrow.color}>
         {eyebrow}
       </ThemedText>
-      <ThemedText variant="display" color={recipe.display.color}>
+      <ThemedText variant={size} color={recipe.display.color}>
         {title}
       </ThemedText>
+      {children ? <View style={{ gap: theme.spacing.md, marginTop: theme.spacing.sm }}>{children}</View> : null}
     </View>
   );
 }

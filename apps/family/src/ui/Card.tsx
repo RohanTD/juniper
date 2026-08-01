@@ -26,6 +26,10 @@ export function Card({ icon, title, subtitle, onPress, iconColor, iconBackground
   return (
     <Pressable
       accessibilityRole={onPress ? 'button' : undefined}
+      // Explicit rather than derived from children: the icon and chevron are
+      // decorative here, and a label assembled from every descendant reads the
+      // title and subtitle as one run-on sentence on some screen readers.
+      accessibilityLabel={onPress ? [title, subtitle].filter(Boolean).join('. ') : undefined}
       onPress={onPress}
       disabled={!onPress}
       style={({ pressed }) => ({

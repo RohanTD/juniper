@@ -18,6 +18,15 @@ def _flag(env: Mapping[str, str], name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _origins(raw: str | None, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Comma-separated origin list.  An explicitly empty value disables CORS
+    entirely rather than silently falling back to the dev defaults — a
+    deployment that means "no browsers" must be able to say so."""
+    if raw is None:
+        return default
+    return tuple(origin.strip() for origin in raw.split(",") if origin.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     # Auth for our own HTTP surface (Deepgram think endpoint + preferences API)
@@ -36,6 +45,9 @@ class Settings:
     # Stores
     preferences_path: str = "data/preferences.json"
     context_brain_path: str = "data/context_brain.json"
+    # Family-side alert acknowledgements. NOT the escalation Task's status —
+    # that belongs to the care team; see acknowledgements.py.
+    alert_acknowledgements_path: str = "data/alert_acknowledgements.json"
     # FHIR attribution. Medplum assigns its own UUID on create — these must be
     # the actual Device/Organization ids from the target project (printed by
     # medplum/scripts/apply.sh), never the identifier slug. An unset value
@@ -76,6 +88,24 @@ class Settings:
     # Deepgram voice/listen models
     deepgram_listen_model: str = "nova-3"
     deepgram_speak_model: str = "aura-2-asteria-en"
+    # Browser origins allowed to call the app-level store routes.
+    #
+    # The family app runs as a WEB dashboard, so its calls to this service are
+    # cross-origin (Expo web on :8081 -> this service on :8000) and a browser
+    # blocks them outright without CORS headers. The failure is silent from the
+    # service's side — the request never arrives — and looks to the user like
+    # "call settings won't load" with a healthy server sitting right there.
+    #
+    # An explicit list, never "*": these routes authenticate with a bearer
+    # token rather than a cookie, so this is not a CSRF surface, but a
+    # wildcard would still let any page a caregiver visits enumerate the API
+    # using a token it managed to obtain. Defaults cover Expo's dev ports only;
+    # a deployment sets JUNIPER_CORS_ORIGINS to its real origins.
+    cors_origins: tuple[str, ...] = (
+        "http://localhost:8081",
+        "http://localhost:8082",
+        "http://localhost:19006",
+    )
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -95,6 +125,9 @@ class Settings:
             medplum_client_secret=env.get("MEDPLUM_CLIENT_SECRET"),
             preferences_path=env.get("JUNIPER_PREFERENCES_PATH", default.preferences_path),
             context_brain_path=env.get("JUNIPER_CONTEXT_BRAIN_PATH", default.context_brain_path),
+            alert_acknowledgements_path=env.get(
+                "JUNIPER_ALERT_ACKNOWLEDGEMENTS_PATH", default.alert_acknowledgements_path
+            ),
             device_ref=env.get("JUNIPER_DEVICE_REFERENCE", default.device_ref),
             organization_ref=env.get("JUNIPER_ORGANIZATION_REFERENCE", default.organization_ref),
             ehr_brief_token_budget=int(
@@ -137,6 +170,7 @@ class Settings:
             deepgram_listen_model=env.get(
                 "JUNIPER_DEEPGRAM_LISTEN_MODEL", default.deepgram_listen_model
             ),
+            cors_origins=_origins(env.get("JUNIPER_CORS_ORIGINS"), default.cors_origins),
             deepgram_speak_model=env.get(
                 "JUNIPER_DEEPGRAM_SPEAK_MODEL", default.deepgram_speak_model
             ),

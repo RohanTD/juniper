@@ -11,9 +11,11 @@ import { ThemedText } from './ThemedText';
 export interface TextFieldProps extends TextInputProps {
   label: string;
   hint?: string;
+  /** Forwarded to the inner TextInput, so a screen can move focus for the user. */
+  ref?: React.Ref<TextInput>;
 }
 
-export function TextField({ label, hint, style, ...rest }: TextFieldProps) {
+export function TextField({ label, hint, style, ref, ...rest }: TextFieldProps) {
   const theme = useTheme();
   const { fontScale } = useWindowDimensions();
   const bodyStyle = resolveTextStyle(theme.textStyles.body, fontScale) as TextStyle;
@@ -23,6 +25,7 @@ export function TextField({ label, hint, style, ...rest }: TextFieldProps) {
         {label}
       </ThemedText>
       <TextInput
+        ref={ref}
         allowFontScaling={false}
         placeholderTextColor={theme.colors.text.secondary}
         {...rest}

@@ -66,11 +66,17 @@ describe('caregiver access scope', () => {
     expect(offenders(/juniper-transcript|NOTE_CATEGORY\.transcript\b/)).toEqual([]);
   });
 
-  it('reads only the family-summary document category', () => {
+  it('reads only family-facing document categories', () => {
+    // An allow-list, not a single name: the app now reads two categories —
+    // the per-call family summary and the standing family guidance. Both are
+    // written *for* this reader and consent-gated at generation. Widening the
+    // list is a deliberate act that must be made here, in the open, rather
+    // than by adding one more `NOTE_CATEGORY.` reference somewhere in src/.
+    const FAMILY_FACING = /NOTE_CATEGORY\.(familySummary|familyGuidance)\b/;
     const categoryUses = SOURCES.filter((row) => /NOTE_CATEGORY\./.test(row.text));
     expect(categoryUses.length).toBeGreaterThan(0);
     for (const row of categoryUses) {
-      expect(row.text).toMatch(/NOTE_CATEGORY\.familySummary/);
+      expect(`${row.file}:${row.line}: ${row.text.trim()}`).toMatch(FAMILY_FACING);
     }
   });
 

@@ -25,7 +25,8 @@
     {
       "resourceType": "DocumentReference",
       "readonly": true,
-      "criteria": "DocumentReference?subject=%patient&category=https://juniper.health/fhir/CodeSystem/note-category|juniper-family-summary"
+      "criteria": "DocumentReference?subject=%patient&category=https://juniper.health/fhir/CodeSystem/note-category|juniper-family-summary,https://juniper.health/fhir/CodeSystem/note-category|juniper-family-guidance",
+      "_comment": "Two categories, comma-separated (FHIR search OR): the per-call family summary and the standing family guidance. Both are written FOR this reader and are consent-gated at generation. juniper-note and juniper-transcript are absent and must stay absent — adding a category here is the one edit that could silently expose the clinical record to families, which is why check.mjs asserts on the exact code list rather than on 'contains family-summary'."
     },
     {
       "resourceType": "Binary",

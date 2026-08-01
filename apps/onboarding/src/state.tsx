@@ -1,48 +1,209 @@
 /**
- * In-memory flow state: one answer object built up across the one-question-
- * per-screen flow, plus the step ordering (docs/PLAN.md apps/onboarding).
+ * Flow state: one answer object built up across the one-question-per-screen
+ * flow (docs/PLAN.md apps/onboarding), persisted to the device as it is entered
+ * and restored automatically on launch.
+ *
+ * The shape, the step order and the choice lists live in `./answers` (pure);
+ * the persistence rules live in `./draft` (pure); the platform storage choice
+ * lives in `./draftStorage`. This file is only the React wiring — and it
+ * re-exports the pure modules so screens keep importing from '../../src/state'.
  */
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
-import type { CallWindow, Weekday } from './preferences';
-import type { ConsentAnswers, LanguageChoice, OnboardingAnswers } from './submit';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { hasAnyAnswer, initialDraft, type AnswersDraft, type StepPath } from './answers';
+import { OnboardingDraftStore, resumeStepFor, type DraftStorage } from './draft';
+import { draftStorage } from './draftStorage';
 
-/** The flow's answer draft — everything optional until review validates it. */
-export interface AnswersDraft {
-  patientId?: string;
-  completedBy: OnboardingAnswers['completedBy'];
-  legalName?: { given: string; family: string };
-  dob?: string;
-  phone?: string;
-  preferredName?: string;
-  language?: LanguageChoice;
-  callWindows: CallWindow[];
-  topicsToAvoid: string[];
-  familyContact?: OnboardingAnswers['familyContact'];
-  consents: ConsentAnswers;
-}
+export * from './answers';
+export { DRAFT_TTL_MS, resumeStepFor, type StoredDraft } from './draft';
 
-const initialDraft: AnswersDraft = {
-  completedBy: { role: 'patient' },
-  callWindows: [],
-  topicsToAvoid: [],
-  consents: { aiCalling: false, recording: false, familySharing: false },
-};
+/**
+ * Keystrokes are persisted, so collapse a burst of them into one write. Short
+ * enough that a call arriving mid-sentence loses at most the last word; long
+ * enough that typing a name is one keychain write rather than eight.
+ */
+const SAVE_DEBOUNCE_MS = 250;
 
 interface OnboardingStore {
   answers: AnswersDraft;
+  /** Merge an answer. Called as fields change, not only on Continue. */
   update: (partial: Partial<AnswersDraft>) => void;
+  /**
+   * Merge an answer and record the question as answered. This is what resume
+   * reads: it distinguishes "declined the family contact" from "never got
+   * there", which no amount of inspecting the answers can.
+   */
+  completeStep: (step: StepPath, partial?: Partial<AnswersDraft>) => void;
+  /** Where "pick up where you left off" should land. */
+  resumeStep: StepPath;
+  /** A saved draft was restored this launch and the user has not been told yet. */
+  restored: boolean;
+  acknowledgeRestore: () => void;
+  /** Scope the draft to a patient, so a second patient's link cannot see it. */
+  adoptPatient: (patientId: string) => void;
+  /** Throw the saved draft away and begin again (the explicit "Start over"). */
+  discardDraft: () => void;
+  /**
+   * Run the submit, then delete the draft — and only then. A failed submit
+   * leaves everything intact so "try again" is possible; see ./draft.
+   */
+  clearDraftAfterSubmit: <T>(submit: () => Promise<T>) => Promise<T>;
   reset: () => void;
 }
 
 const OnboardingContext = createContext<OnboardingStore | undefined>(undefined);
 
-export function OnboardingProvider({ children }: { children: ReactNode }) {
+export interface OnboardingProviderProps {
+  children: ReactNode;
+  /** Injectable for tests and for the web export; defaults to the secure store. */
+  storage?: DraftStorage;
+}
+
+export function OnboardingProvider({ children, storage }: OnboardingProviderProps) {
   const [answers, setAnswers] = useState<AnswersDraft>(initialDraft);
+  const [completedSteps, setCompletedSteps] = useState<StepPath[]>([]);
+  const [restored, setRestored] = useState(false);
+  // Nothing renders until the draft has been read back. Otherwise the welcome
+  // screen would flash "Begin setup" and then swap to "Welcome back", which is
+  // exactly the moment of doubt this feature exists to remove.
+  const [hydrated, setHydrated] = useState(false);
+
+  const drafts = useRef<OnboardingDraftStore | undefined>(undefined);
+  if (!drafts.current) {
+    drafts.current = new OnboardingDraftStore(storage ?? draftStorage);
+  }
+  const store = drafts.current;
+
+  // Latest values for callbacks that must stay referentially stable (they are
+  // effect dependencies in screens).
+  const latest = useRef({ answers, completedSteps });
+  latest.current = { answers, completedSteps };
+
+  useEffect(() => {
+    let mounted = true;
+    store
+      .load()
+      .then((draft) => {
+        if (!mounted) {
+          return;
+        }
+        if (draft && (draft.completedSteps.length > 0 || hasAnyAnswer(draft.answers))) {
+          setAnswers(draft.answers);
+          setCompletedSteps(draft.completedSteps);
+          setRestored(true);
+        }
+      })
+      .finally(() => {
+        if (mounted) {
+          setHydrated(true);
+        }
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [store]);
+
+  useEffect(() => {
+    if (!hydrated) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      void store.save(answers, completedSteps);
+    }, SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [hydrated, answers, completedSteps, store]);
+
   const update = useCallback((partial: Partial<AnswersDraft>) => {
     setAnswers((previous) => ({ ...previous, ...partial }));
   }, []);
-  const reset = useCallback(() => setAnswers(initialDraft), []);
-  const value = useMemo(() => ({ answers, update, reset }), [answers, update, reset]);
+
+  const completeStep = useCallback((step: StepPath, partial?: Partial<AnswersDraft>) => {
+    if (partial) {
+      setAnswers((previous) => ({ ...previous, ...partial }));
+    }
+    setCompletedSteps((previous) =>
+      previous.includes(step) ? previous : [...previous, step]
+    );
+  }, []);
+
+  const adoptPatient = useCallback(
+    (patientId: string) => {
+      if (!patientId || store.currentScope() === patientId) {
+        return;
+      }
+      setAnswers((previous) =>
+        previous.patientId === patientId ? previous : { ...previous, patientId }
+      );
+      const { answers: current, completedSteps: steps } = latest.current;
+      void (async () => {
+        const result = await store.adopt(patientId, current, steps);
+        if (result.switched) {
+          // Someone else's link on this device. Their answers, or a clean start.
+          const draft = result.draft;
+          setAnswers({ ...(draft?.answers ?? initialDraft), patientId });
+          setCompletedSteps(draft?.completedSteps ?? []);
+          setRestored(Boolean(draft));
+        }
+      })();
+    },
+    [store]
+  );
+
+  const reset = useCallback(() => {
+    // The patient this link is for survives "start over" — it came from the
+    // link, not from an answer, and losing it would strand the submit.
+    setAnswers((previous) => ({ ...initialDraft, patientId: previous.patientId }));
+    setCompletedSteps([]);
+    setRestored(false);
+  }, []);
+
+  const discardDraft = useCallback(() => {
+    void store.clear();
+    reset();
+  }, [reset, store]);
+
+  const clearDraftAfterSubmit = useCallback(
+    <T,>(submit: () => Promise<T>) => store.clearAfterSubmit(submit),
+    [store]
+  );
+
+  const value = useMemo<OnboardingStore>(
+    () => ({
+      answers,
+      update,
+      completeStep,
+      resumeStep: resumeStepFor(completedSteps),
+      restored,
+      acknowledgeRestore: () => setRestored(false),
+      adoptPatient,
+      discardDraft,
+      clearDraftAfterSubmit,
+      reset,
+    }),
+    [
+      answers,
+      completedSteps,
+      restored,
+      update,
+      completeStep,
+      adoptPatient,
+      discardDraft,
+      clearDraftAfterSubmit,
+      reset,
+    ]
+  );
+
+  if (!hydrated) {
+    return null;
+  }
   return <OnboardingContext.Provider value={value}>{children}</OnboardingContext.Provider>;
 }
 
@@ -52,127 +213,4 @@ export function useOnboarding(): OnboardingStore {
     throw new Error('useOnboarding must be used inside OnboardingProvider');
   }
   return store;
-}
-
-// ---------------------------------------------------------------------------
-// Step ordering — the mandated question order, one screen each.
-// ---------------------------------------------------------------------------
-
-export const STEP_ORDER = [
-  '/steps/who',
-  '/steps/name',
-  '/steps/dob',
-  '/steps/phone',
-  '/steps/preferred-name',
-  '/steps/language',
-  '/steps/call-times',
-  '/steps/topics',
-  '/steps/family-contact',
-  '/steps/consent-calling',
-  '/steps/consent-recording',
-  '/steps/consent-sharing',
-  '/steps/review',
-] as const;
-
-export type StepPath = (typeof STEP_ORDER)[number];
-
-export function nextStepPath(current: StepPath): StepPath | undefined {
-  const index = STEP_ORDER.indexOf(current);
-  return index >= 0 ? STEP_ORDER[index + 1] : undefined;
-}
-
-export function stepPosition(current: StepPath): { index: number; total: number } {
-  return { index: STEP_ORDER.indexOf(current) + 1, total: STEP_ORDER.length };
-}
-
-/** "your" for a patient filling it in, "their" for a proxy. */
-export function subjectWord(answers: AnswersDraft): 'your' | 'their' {
-  return answers.completedBy.role === 'proxy' ? 'their' : 'your';
-}
-
-// ---------------------------------------------------------------------------
-// Choice lists
-// ---------------------------------------------------------------------------
-
-export const LANGUAGES: LanguageChoice[] = [
-  { code: 'en', label: 'English' },
-  { code: 'es', label: 'Spanish' },
-  { code: 'zh', label: 'Chinese' },
-  { code: 'vi', label: 'Vietnamese' },
-  { code: 'tl', label: 'Tagalog' },
-  { code: 'ko', label: 'Korean' },
-  { code: 'ru', label: 'Russian' },
-  { code: 'ar', label: 'Arabic' },
-];
-
-const WEEKDAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri'];
-const WEEKEND: Weekday[] = ['sat', 'sun'];
-
-export interface CallWindowChoice {
-  id: string;
-  title: string;
-  subtitle: string;
-  days: Weekday[];
-  start: string;
-  end: string;
-}
-
-/** Friendly picks instead of time pickers; timezone is attached at selection. */
-export const CALL_WINDOW_CHOICES: CallWindowChoice[] = [
-  { id: 'weekday-morning', title: 'Weekday mornings', subtitle: '9:00 to 11:00, Monday through Friday', days: WEEKDAYS, start: '09:00', end: '11:00' },
-  { id: 'weekday-afternoon', title: 'Weekday afternoons', subtitle: '1:00 to 3:00, Monday through Friday', days: WEEKDAYS, start: '13:00', end: '15:00' },
-  { id: 'weekday-evening', title: 'Weekday evenings', subtitle: '5:00 to 7:00, Monday through Friday', days: WEEKDAYS, start: '17:00', end: '19:00' },
-  { id: 'weekend-morning', title: 'Weekend mornings', subtitle: '9:00 to 11:00, Saturday and Sunday', days: WEEKEND, start: '09:00', end: '11:00' },
-];
-
-export function deviceTimezone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'America/New_York';
-  } catch {
-    return 'America/New_York';
-  }
-}
-
-export function toCallWindow(choice: CallWindowChoice, timezone: string): CallWindow {
-  return { days: choice.days, start: choice.start, end: choice.end, timezone };
-}
-
-/** Validate the draft is complete enough to submit; returns missing-field labels. */
-export function missingAnswers(answers: AnswersDraft): string[] {
-  const missing: string[] = [];
-  if (!answers.legalName?.given.trim() || !answers.legalName?.family.trim()) {
-    missing.push('Legal name');
-  }
-  if (!answers.dob) {
-    missing.push('Date of birth');
-  }
-  if (!answers.phone?.trim()) {
-    missing.push('Phone number');
-  }
-  if (!answers.language) {
-    missing.push('Language');
-  }
-  if (answers.callWindows.length === 0) {
-    missing.push('Best call times');
-  }
-  return missing;
-}
-
-/** Narrow a validated draft into the strict submit shape. */
-export function toSubmitAnswers(answers: AnswersDraft): OnboardingAnswers {
-  if (missingAnswers(answers).length > 0) {
-    throw new Error('Draft is incomplete');
-  }
-  return {
-    completedBy: answers.completedBy,
-    legalName: answers.legalName as { given: string; family: string },
-    dob: answers.dob as string,
-    phone: answers.phone as string,
-    preferredName: answers.preferredName,
-    language: answers.language as LanguageChoice,
-    callWindows: answers.callWindows,
-    topicsToAvoid: answers.topicsToAvoid,
-    familyContact: answers.familyContact,
-    consents: answers.consents,
-  };
 }

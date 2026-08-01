@@ -16,7 +16,7 @@ from juniper_voice.controller import (
 )
 from juniper_voice.escalation import EscalationSink
 from juniper_voice.llm.provider import FakeProvider, ModelRoster
-from juniper_voice.medplum import ConsentStatus, EHRBrief
+from juniper_voice.medplum import CareTeamMember, ConsentStatus, EHRBrief
 from juniper_voice.preferences import PreferencesStore
 from juniper_voice.terminology import get_terminology
 from juniper_voice.transcript import TranscriptBuffer
@@ -226,9 +226,27 @@ def seed_full_patient(store: FakeMedplum, terminology, patient_id: str = "pat-1"
         {
             "resourceType": "CareTeam",
             "subject": {"reference": f"Patient/{patient_id}"},
+            # display and role mirror what medplum/seed/seed-bundle.json and
+            # the onboarding app actually write. They are not decoration: the
+            # family app cannot read CareTeam or Practitioner, so the display
+            # carried on Task.owner is the only name it ever sees.
             "participant": [
-                {"member": {"reference": "RelatedPerson/daughter-1"}},
-                {"member": {"reference": "Practitioner/pcp-1"}},
+                {
+                    "role": [{"coding": [{"code": "133932002", "display": "Caregiver"}]}],
+                    "member": {
+                        "reference": "RelatedPerson/daughter-1",
+                        "display": "Ruth Wilson (daughter)",
+                    },
+                },
+                {
+                    "role": [
+                        {"coding": [{"code": "446050000", "display": "Primary care physician"}]}
+                    ],
+                    "member": {
+                        "reference": "Practitioner/pcp-1",
+                        "display": "Dr. Amara Osei",
+                    },
+                },
             ],
         }
     )
@@ -313,7 +331,10 @@ def make_brief(
         language="English",
         phone="+15550001111",
         consent=consent,
-        care_team_refs=("RelatedPerson/daughter-1", "Practitioner/pcp-1"),
+        care_team=(
+            CareTeamMember("RelatedPerson/daughter-1", display="Ruth Wilson", role="Daughter"),
+            CareTeamMember("Practitioner/pcp-1", display="Dr. Amara Osei", role="Primary care"),
+        ),
         prior_notes=(),
         token_estimate=40,
     )

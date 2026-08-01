@@ -11,25 +11,28 @@ import { ThemedText } from '../../src/ui/ThemedText';
 
 export default function TopicsStep() {
   const theme = useTheme();
-  const { answers, update } = useOnboarding();
-  const [topics, setTopics] = useState<string[]>(answers.topicsToAvoid);
+  // The list lives in the draft, so each added topic is saved as it is added.
+  // (Only the half-typed compose box is local — losing a partial phrase is
+  // survivable in a way that losing the list is not.)
+  const { answers, update, completeStep } = useOnboarding();
+  const topics = answers.topicsToAvoid;
   const [draft, setDraft] = useState('');
   const nextPath = nextStepPath('/steps/topics') as string;
 
   const addTopic = () => {
     const topic = draft.trim();
     if (topic && !topics.includes(topic)) {
-      setTopics([...topics, topic]);
+      update({ topicsToAvoid: [...topics, topic] });
     }
     setDraft('');
   };
 
   const removeTopic = (topic: string) => {
-    setTopics(topics.filter((t) => t !== topic));
+    update({ topicsToAvoid: topics.filter((t) => t !== topic) });
   };
 
   const next = () => {
-    update({ topicsToAvoid: topics });
+    completeStep('/steps/topics');
     router.push(nextPath);
   };
 

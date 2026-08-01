@@ -77,7 +77,7 @@ class Terminology:
             raise TerminologyError(f"missing terminology entry {system_key}.{code_key}") from exc
 
     def note_category(self, key: str) -> Coding:
-        """key is one of: note, transcript, familySummary."""
+        """key is one of: note, transcript, familySummary, familyGuidance."""
         return self._system_coding("noteCategory", key)
 
     def fourm_domain(self, key: str) -> Coding:

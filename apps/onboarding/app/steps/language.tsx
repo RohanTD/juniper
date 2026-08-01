@@ -1,9 +1,7 @@
 import { useTheme } from '@juniper/theme';
 import { router } from 'expo-router';
-import { useState } from 'react';
 import { View } from 'react-native';
 import { LANGUAGES, nextStepPath, useOnboarding } from '../../src/state';
-import type { LanguageChoice } from '../../src/submit';
 import { PrimaryButton } from '../../src/ui/Buttons';
 import { ChoiceCard } from '../../src/ui/ChoiceCard';
 import { Screen } from '../../src/ui/Screen';
@@ -11,12 +9,14 @@ import { StepHeader } from '../../src/ui/StepHeader';
 
 export default function LanguageStep() {
   const theme = useTheme();
-  const { answers, update } = useOnboarding();
-  const [choice, setChoice] = useState<LanguageChoice | undefined>(answers.language);
+  // The selection lives in the draft rather than in local state, so it is
+  // persisted the moment it is tapped.
+  const { answers, update, completeStep } = useOnboarding();
+  const choice = answers.language;
 
   const next = () => {
     if (choice) {
-      update({ language: choice });
+      completeStep('/steps/language');
       router.push(nextStepPath('/steps/language') as string);
     }
   };
@@ -30,7 +30,7 @@ export default function LanguageStep() {
             key={language.code}
             title={language.label}
             selected={choice?.code === language.code}
-            onPress={() => setChoice(language)}
+            onPress={() => update({ language })}
           />
         ))}
       </View>

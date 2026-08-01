@@ -105,6 +105,18 @@ class ContextBrain:
                     constraints.append(topic)
         return tuple(constraints)
 
+    def interests(self, patient_id: str) -> tuple[str, ...]:
+        """What the patient said they enjoy, from onboarding.
+
+        The positive counterpart to :meth:`negative_constraints`.  On the very
+        first call there are no memories at all, so without this the Companion
+        opens with nothing to go on — the exact "how has your week been?"
+        genericness the product exists to avoid.
+        """
+        if self._preferences is None:
+            return ()
+        return tuple(self._preferences.get(patient_id).interests)
+
     def digest(self, patient_id: str) -> str:
         """The experiential digest carried in the Companion's prompt — what
         makes the call feel like a relationship rather than a survey."""
@@ -113,6 +125,13 @@ class ContextBrain:
         if record.memories:
             lines.append("Things you know about this patient from past calls:")
             lines.extend(f"- {memory}" for memory in record.memories)
+        interests = self.interests(patient_id)
+        if interests:
+            # Framed as an invitation, not an instruction: a Companion told to
+            # "ask about gardening" every call becomes a survey with better
+            # topics. It should know these the way a friend does.
+            lines.append("Things they told us they enjoy (good ground for real conversation):")
+            lines.extend(f"- {interest}" for interest in interests)
         constraints = self.negative_constraints(patient_id)
         if constraints:
             lines.append("Topics you must NEVER bring up or mention (hard prohibitions):")
