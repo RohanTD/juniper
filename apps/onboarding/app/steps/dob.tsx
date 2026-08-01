@@ -1,6 +1,6 @@
 import { useTheme } from '@juniper/theme';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { nextStepPath, subjectWord, useOnboarding } from '../../src/state';
 import { PrimaryButton } from '../../src/ui/Buttons';
@@ -27,18 +27,26 @@ function toIsoDate(month: string, day: string, year: string): string | undefined
 
 export default function DobStep() {
   const theme = useTheme();
-  const { answers, update } = useOnboarding();
+  const { answers, update, completeStep } = useOnboarding();
   const [year, month, day] = (answers.dob ?? '--').split('-');
-  const [monthText, setMonthText] = useState(month ?? '');
-  const [dayText, setDayText] = useState(day ?? '');
-  const [yearText, setYearText] = useState(year ?? '');
+  const [monthText, setMonthText] = useState(answers.dobEntry?.month ?? month ?? '');
+  const [dayText, setDayText] = useState(answers.dobEntry?.day ?? day ?? '');
+  const [yearText, setYearText] = useState(answers.dobEntry?.year ?? year ?? '');
   const you = subjectWord(answers);
 
   const iso = toIsoDate(monthText, dayText, yearText);
 
+  // `dob` only exists once the three boxes parse into a real date, so the boxes
+  // are persisted as typed alongside it. Otherwise "1948" entered in the year
+  // and nothing else would vanish on a reload, and re-entering a birth date is
+  // exactly the friction this flow cannot afford.
+  useEffect(() => {
+    update({ dobEntry: { month: monthText, day: dayText, year: yearText }, dob: iso });
+  }, [monthText, dayText, yearText, iso, update]);
+
   const next = () => {
     if (iso) {
-      update({ dob: iso });
+      completeStep('/steps/dob');
       router.push(nextStepPath('/steps/dob') as string);
     }
   };

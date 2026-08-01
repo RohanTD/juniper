@@ -11,7 +11,8 @@
 import { useMedplum } from '@medplum/react-hooks';
 import { useCallback, useEffect, useState } from 'react';
 import { ENV } from '../env';
-import { PreferencesApiError, PreferencesClient, type PatientPreferences } from '../preferences';
+import { PreferencesClient, type PatientPreferences } from '../preferences';
+import { describeVoiceApiError } from '../voiceApi';
 
 export interface PreferencesState {
   preferences: PatientPreferences | undefined;
@@ -25,15 +26,8 @@ export interface PreferencesState {
   reload: () => void;
 }
 
-function describe(error: unknown): string {
-  if (error instanceof PreferencesApiError) {
-    if (error.status === 401) return 'your session has expired — please sign in again';
-    if (error.status === 403) return 'this account is not allowed to change these settings';
-    if (error.status === 503) return 'we could not verify your access just now';
-    return `the service returned an error (${error.status})`;
-  }
-  return 'we could not reach the Juniper service';
-}
+/** Shared with the acknowledgements hook — same service, same failure modes. */
+const describe = describeVoiceApiError;
 
 export function usePreferences(patientId: string | undefined): PreferencesState {
   const medplum = useMedplum();

@@ -44,10 +44,29 @@ export async function signInWithMedplum(
   options: SignInOptions
 ): Promise<ProfileResource | undefined> {
   const discovery = medplumOAuthDiscovery(medplum.getBaseUrl());
+  const path = options.path ?? 'auth/callback';
   const redirectUri = makeRedirectUri({
     scheme: options.scheme,
-    path: options.path ?? 'auth/callback',
+    path,
+    // `native` forces the app's own scheme on iOS/Android. Without it,
+    // makeRedirectUri notices the JS is being served by Metro and returns a
+    // dev-server URL instead — "exp://172.20.10.3:8082/--/auth/callback" —
+    // which embeds BOTH the LAN IP and the Expo port. Medplum matches redirect
+    // URIs exactly, so that form breaks on every network change, every port
+    // shift, and of course in a production build where there is no Metro at
+    // all. The custom scheme is stable across all three.
+    //
+    // On web this option is ignored and the redirect stays
+    // window.location.origin + path, which is correct there.
+    native: `${options.scheme}://${path}`,
   });
+  // Log the exact URI. Medplum matches redirect URIs EXACTLY, and the value
+  // varies by platform and run mode (custom scheme on a native build,
+  // window.location.origin on web — which changes when Expo picks a different
+  // port). "Invalid redirect URI" tells you nothing about which string was
+  // actually sent, so print it: whatever appears here must be registered
+  // verbatim on the ClientApplication.
+  console.info('[juniper] OAuth redirect URI:', redirectUri);
   const request = new AuthRequest({
     clientId: options.clientId,
     redirectUri,

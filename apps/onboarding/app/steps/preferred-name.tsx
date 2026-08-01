@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { nextStepPath, subjectWord, useOnboarding } from '../../src/state';
 import { PrimaryButton, SecondaryButton } from '../../src/ui/Buttons';
 import { Screen } from '../../src/ui/Screen';
@@ -7,10 +7,14 @@ import { StepHeader } from '../../src/ui/StepHeader';
 import { TextField } from '../../src/ui/TextField';
 
 export default function PreferredNameStep() {
-  const { answers, update } = useOnboarding();
+  const { answers, update, completeStep } = useOnboarding();
   const [name, setName] = useState(answers.preferredName ?? '');
   const you = subjectWord(answers);
   const nextPath = nextStepPath('/steps/preferred-name') as string;
+
+  useEffect(() => {
+    update({ preferredName: name.trim() || undefined });
+  }, [name, update]);
 
   return (
     <Screen>
@@ -23,7 +27,7 @@ export default function PreferredNameStep() {
       <PrimaryButton
         title="Continue"
         onPress={() => {
-          update({ preferredName: name.trim() || undefined });
+          completeStep('/steps/preferred-name');
           router.push(nextPath);
         }}
         disabled={name.trim() === ''}
@@ -31,7 +35,9 @@ export default function PreferredNameStep() {
       <SecondaryButton
         title="Skip — use the legal name"
         onPress={() => {
-          update({ preferredName: undefined });
+          // A deliberate skip is an answer: resume must not ask again.
+          completeStep('/steps/preferred-name', { preferredName: undefined });
+          setName('');
           router.push(nextPath);
         }}
       />

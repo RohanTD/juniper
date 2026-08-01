@@ -193,9 +193,14 @@ async def run_post_call(
 
     write_result: PostCallWriteResult | None = None
     if medplum is not None:
-        owner_ref = controller.brief.care_team_refs[0] if controller.brief.care_team_refs else None
+        owner = next(iter(controller.brief.care_team), None)
         tasks = controller.escalation.build_tasks(
-            terminology=terminology, device_ref=device_ref, owner_ref=owner_ref
+            terminology=terminology,
+            device_ref=device_ref,
+            owner_ref=owner.reference if owner else None,
+            # Carried through so the family app can name who the alert went to
+            # — it cannot read CareTeam or Practitioner to resolve it itself.
+            owner_display=owner.display if owner else None,
         )
         # controller.call_started_at (monotonic, for elapsed-time math) is
         # NOT a wall-clock timestamp — feeding it through _iso() produces a

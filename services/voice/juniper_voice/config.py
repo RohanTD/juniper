@@ -36,6 +36,9 @@ class Settings:
     # Stores
     preferences_path: str = "data/preferences.json"
     context_brain_path: str = "data/context_brain.json"
+    # Family-side alert acknowledgements. NOT the escalation Task's status —
+    # that belongs to the care team; see acknowledgements.py.
+    alert_acknowledgements_path: str = "data/alert_acknowledgements.json"
     # FHIR attribution. Medplum assigns its own UUID on create — these must be
     # the actual Device/Organization ids from the target project (printed by
     # medplum/scripts/apply.sh), never the identifier slug. An unset value
@@ -95,6 +98,9 @@ class Settings:
             medplum_client_secret=env.get("MEDPLUM_CLIENT_SECRET"),
             preferences_path=env.get("JUNIPER_PREFERENCES_PATH", default.preferences_path),
             context_brain_path=env.get("JUNIPER_CONTEXT_BRAIN_PATH", default.context_brain_path),
+            alert_acknowledgements_path=env.get(
+                "JUNIPER_ALERT_ACKNOWLEDGEMENTS_PATH", default.alert_acknowledgements_path
+            ),
             device_ref=env.get("JUNIPER_DEVICE_REFERENCE", default.device_ref),
             organization_ref=env.get("JUNIPER_ORGANIZATION_REFERENCE", default.organization_ref),
             ehr_brief_token_budget=int(

@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { nextStepPath, subjectWord, useOnboarding } from '../../src/state';
 import { PrimaryButton } from '../../src/ui/Buttons';
 import { Screen } from '../../src/ui/Screen';
@@ -11,12 +11,16 @@ function isPlausiblePhone(value: string): boolean {
 }
 
 export default function PhoneStep() {
-  const { answers, update } = useOnboarding();
+  const { answers, update, completeStep } = useOnboarding();
   const [phone, setPhone] = useState(answers.phone ?? '');
   const you = subjectWord(answers);
 
-  const next = () => {
+  useEffect(() => {
     update({ phone: phone.trim() });
+  }, [phone, update]);
+
+  const next = () => {
+    completeStep('/steps/phone');
     router.push(nextStepPath('/steps/phone') as string);
   };
 

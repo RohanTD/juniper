@@ -26,10 +26,12 @@ import {
   type PreferencesState,
 } from '../src/data/preferences';
 import { useMonitoredPatient } from '../src/data/patient';
+import { describeNextCall, nextCall, NEXT_CALL_CAVEAT } from '../src/data/schedule';
 import type { CallWindow, PatientPreferences, Weekday } from '../src/preferences';
 import { Screen } from '../src/ui/Screen';
 import { SectionHeader } from '../src/ui/SectionHeader';
 import { ThemedText } from '../src/ui/ThemedText';
+import { TopBar } from '../src/ui/TopBar';
 
 const DEFAULT_WINDOW: CallWindow = {
   days: ['mon', 'tue', 'wed', 'thu', 'fri'],
@@ -73,6 +75,7 @@ export default function Preferences() {
 
   return (
     <Screen>
+      <TopBar />
       <ThemedText variant="h1" style={{ marginTop: theme.spacing.base }}>
         Call settings
       </ThemedText>
@@ -114,7 +117,12 @@ export default function Preferences() {
             <ThemedText variant="bodySmall" color={theme.colors.text.secondary}>
               No times set yet — Juniper will use its default schedule.
             </ThemedText>
-          ) : null}
+          ) : (
+            /* Computed from the DRAFT, so the consequence of an edit is visible
+               before it is saved. A schedule editor that only shows you what
+               you typed makes you do the weekday arithmetic yourself. */
+            <NextCallPreview windows={windows} dirty={Boolean(dirty)} />
+          )}
 
           {windows.map((window, index) => (
             <View
@@ -298,6 +306,26 @@ export default function Preferences() {
         </>
       ) : null}
     </Screen>
+  );
+}
+
+/** "Next call: Tomorrow · 9:00 AM – 11:00 AM EDT", derived from the draft. */
+function NextCallPreview({ windows, dirty }: { windows: CallWindow[]; dirty: boolean }) {
+  const theme = useTheme();
+  const copy = describeNextCall(nextCall(windows));
+  return (
+    <View style={{ gap: theme.spacing.xs }}>
+      <ThemedText variant="bodySmall" color={theme.colors.text.secondary}>
+        {copy
+          ? `${dirty ? 'Would be' : 'Next call'}: ${copy.day} · ${copy.range}`
+          : 'These times don’t describe a call yet — pick at least one day and a valid start and end.'}
+      </ThemedText>
+      {copy ? (
+        <ThemedText variant="caption" color={theme.colors.text.secondary}>
+          {NEXT_CALL_CAVEAT}
+        </ThemedText>
+      ) : null}
+    </View>
   );
 }
 

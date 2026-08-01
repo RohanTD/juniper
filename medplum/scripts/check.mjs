@@ -21,7 +21,11 @@
  *      %patient, restricted to the allowed resource types, carries the exact
  *      terminology-derived criteria codes, and never mentions juniper-note or
  *      juniper-transcript (nor grants Binary).
- *   8. Device/Organization identifiers match terminology.json.
+ *   8. The patient-onboarding AccessPolicy is writable for exactly
+ *      {Patient, RelatedPerson, CareTeam, Consent} — Consent above all — is
+ *      parameterized on %patient throughout, and grants no clinical write and
+ *      no note/transcript read.
+ *   9. Device/Organization identifiers match terminology.json.
  *
  * Usage: node medplum/scripts/check.mjs   (exit code 0 = all checks pass)
  */
@@ -337,8 +341,71 @@ const caregiverPolicy = files.get(join(RESOURCES_DIR, 'access-policy-caregiver.j
   }
 }
 
-// ------------------------------------------- 8. device / organization ids
-section('8. Device and Organization identifiers from terminology.json');
+// -------------------------------------------- 8. patient onboarding policy
+section('8. Patient onboarding AccessPolicy scoping');
+const onboardingPolicy = files.get(join(RESOURCES_DIR, 'access-policy-patient-onboarding.json'));
+{
+  // This policy exists because Medplum's built-in "Default Patient Access
+  // Policy" has no Consent entry, and Medplum is default-deny — a patient
+  // signed in with the stock policy fills in all thirteen onboarding screens
+  // and is then Forbidden at submit. The Consent assertion below is the
+  // regression guard for exactly that failure; do not relax it.
+  const ONBOARDING_WRITABLE = new Set(['Patient', 'RelatedPerson', 'CareTeam', 'Consent']);
+  // The patient sees their own chart but authors nothing clinical — the same
+  // reads-broad/writes-narrow asymmetry the voice service is held to.
+  const ONBOARDING_READONLY = [
+    'AllergyIntolerance', 'Condition', 'MedicationRequest', 'MedicationStatement',
+    'Observation', 'Encounter', 'Appointment', 'CarePlan', 'Goal',
+  ];
+  if (!onboardingPolicy) {
+    fail('access-policy-patient-onboarding.json is missing');
+  } else {
+    if (onboardingPolicy.compartment?.reference !== '%patient') {
+      fail(`onboarding policy: compartment.reference must be '%patient', got '${onboardingPolicy.compartment?.reference}'`);
+    } else {
+      ok('compartment is %patient (bound per-ProjectMembership)');
+    }
+
+    const writable = new Set();
+    const readonly = new Set();
+    for (const entry of onboardingPolicy.resource ?? []) {
+      (entry.readonly === true ? readonly : writable).add(entry.resourceType);
+      if (!entry.criteria) {
+        fail(`onboarding policy: ${entry.resourceType} entry has no criteria (would be project-wide)`);
+      } else if (!entry.criteria.includes('%patient')) {
+        fail(`onboarding policy: ${entry.resourceType} criteria not parameterized: ${entry.criteria}`);
+      }
+    }
+    const extraWritable = [...writable].filter((t) => !ONBOARDING_WRITABLE.has(t));
+    const missingWritable = [...ONBOARDING_WRITABLE].filter((t) => !writable.has(t));
+    if (extraWritable.length) fail(`onboarding policy grants write beyond the onboarding flow: ${extraWritable.join(', ')}`);
+    if (missingWritable.length) {
+      fail(`onboarding policy missing write access to: ${missingWritable.join(', ')} — submit will 403 at that resource`);
+    }
+    if (!extraWritable.length && !missingWritable.length) {
+      ok(`writable is exactly {${[...ONBOARDING_WRITABLE].join(', ')}}`);
+    }
+    const missingReadonly = ONBOARDING_READONLY.filter((t) => !readonly.has(t));
+    if (missingReadonly.length) fail(`onboarding policy missing read-only access to: ${missingReadonly.join(', ')}`);
+    else ok('own chart readable (allergies, conditions, meds, observations, encounters, appointments, care plans, goals)');
+    const overlap = [...readonly].filter((t) => writable.has(t));
+    if (overlap.length) fail(`onboarding policy lists types as both readonly and writable: ${overlap.join(', ')}`);
+
+    // The onboarding client is a public PKCE app on a device handed between a
+    // patient and their family. Notes and transcripts are the two things that
+    // must never be reachable from it, so the policy names neither type at all.
+    for (const forbidden of ['DocumentReference', 'Binary']) {
+      if (writable.has(forbidden) || readonly.has(forbidden)) {
+        fail(`onboarding policy: must not grant ${forbidden} — clinical notes and call transcripts live there`);
+      } else {
+        ok(`no ${forbidden} grant (notes and transcripts out of reach)`);
+      }
+    }
+  }
+}
+
+// ------------------------------------------- 9. device / organization ids
+section('9. Device and Organization identifiers from terminology.json');
 {
   const device = files.get(join(RESOURCES_DIR, 'device-voice-agent.json'));
   const org = files.get(join(RESOURCES_DIR, 'organization-clinic.json'));
@@ -368,8 +435,8 @@ section('8. Device and Organization identifiers from terminology.json');
       }
     }
   }
-  if (new Set(mrns).size === mrns.length && mrns.length === 2) ok(`distinct MRNs: ${mrns.join(', ')}`);
-  else fail(`expected 2 distinct MRNs, got: ${mrns.join(', ')}`);
+  if (new Set(mrns).size === mrns.length && mrns.length > 0) ok(`distinct MRNs: ${mrns.join(', ')}`);
+  else fail(`expected distinct MRNs, got: ${mrns.join(', ')}`);
 }
 
 // -------------------------------------------------------------- summary

@@ -4,6 +4,7 @@
  * provenance have no FHIR home; they live in the voice service's app-level
  * store so the Companion can change them by voice later.
  */
+import { VoiceApiClient, VoiceApiError, type VoiceApiOptions } from './voiceApi';
 
 export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 
@@ -30,70 +31,41 @@ export interface PatientPreferences {
   completedBy: CompletedBy;
 }
 
-export class PreferencesApiError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string
-  ) {
-    super(message);
+/**
+ * Retained as a distinct type so existing `instanceof` checks keep working;
+ * the behaviour lives on VoiceApiError, which the acknowledgements client
+ * shares.
+ */
+export class PreferencesApiError extends VoiceApiError {
+  constructor(status: number, message: string) {
+    super(status, message);
     this.name = 'PreferencesApiError';
   }
 }
 
-export interface PreferencesClientOptions {
-  /** Voice service base URL. */
-  baseUrl: string;
-  /** JUNIPER_API_TOKEN bearer token. */
-  token: string;
-  /** Injectable for tests. */
-  fetchImpl?: typeof fetch;
-}
+export type PreferencesClientOptions = VoiceApiOptions;
 
-export class PreferencesClient {
-  private readonly baseUrl: string;
-  private readonly token: string;
-  private readonly fetchImpl: typeof fetch;
-
-  constructor(options: PreferencesClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
-    this.token = options.token;
-    this.fetchImpl = options.fetchImpl ?? fetch;
-  }
-
+export class PreferencesClient extends VoiceApiClient {
   private url(patientId: string): string {
-    return `${this.baseUrl}/patients/${encodeURIComponent(patientId)}/preferences`;
-  }
-
-  private headers(): Record<string, string> {
-    return {
-      Authorization: `Bearer ${this.token}`,
-      'Content-Type': 'application/json',
-    };
+    return this.patientUrl(patientId, 'preferences');
   }
 
   async getPreferences(patientId: string): Promise<PatientPreferences> {
-    const response = await this.fetchImpl(this.url(patientId), {
-      method: 'GET',
-      headers: this.headers(),
-    });
-    if (!response.ok) {
-      throw new PreferencesApiError(response.status, `GET preferences failed: ${response.status}`);
-    }
-    return (await response.json()) as PatientPreferences;
+    return this.request<PatientPreferences>(
+      this.url(patientId),
+      { method: 'GET' },
+      'GET preferences'
+    );
   }
 
   async putPreferences(
     patientId: string,
     preferences: PatientPreferences
   ): Promise<PatientPreferences> {
-    const response = await this.fetchImpl(this.url(patientId), {
-      method: 'PUT',
-      headers: this.headers(),
-      body: JSON.stringify(preferences),
-    });
-    if (!response.ok) {
-      throw new PreferencesApiError(response.status, `PUT preferences failed: ${response.status}`);
-    }
-    return (await response.json()) as PatientPreferences;
+    return this.request<PatientPreferences>(
+      this.url(patientId),
+      { method: 'PUT', body: JSON.stringify(preferences) },
+      'PUT preferences'
+    );
   }
 }

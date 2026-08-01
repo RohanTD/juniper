@@ -86,6 +86,7 @@ class EscalationSink:
         terminology: Terminology,
         device_ref: str,
         owner_ref: str | None,
+        owner_display: str | None = None,
     ) -> list[dict[str, Any]]:
         """Escalation Task shapes per docs/CONTRACTS.md §4.  The controller's
         post-call pass links each to the Encounter as it writes them.
@@ -93,6 +94,12 @@ class EscalationSink:
         The description must be self-sufficient for a caregiver reading it at
         11pm: what was said, when, and what has already happened — never a
         bare "urgent".
+
+        ``owner_display`` matters for the same reason.  The caregiver
+        AccessPolicy grants neither ``CareTeam`` nor ``Practitioner``, so
+        ``owner`` resolves to nothing on the family side; without the
+        denormalised display the app can say an alert was routed but never to
+        whom, which is the part a worried family member actually wants.
         """
         tasks: list[dict[str, Any]] = []
         for escalation in self._escalations:
@@ -119,5 +126,7 @@ class EscalationSink:
             }
             if owner_ref:
                 task["owner"] = {"reference": owner_ref}
+                if owner_display:
+                    task["owner"]["display"] = owner_display
             tasks.append(task)
         return tasks

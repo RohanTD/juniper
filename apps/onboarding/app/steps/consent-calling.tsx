@@ -2,7 +2,7 @@ import { useOnboarding } from '../../src/state';
 import { ConsentScreen } from '../../src/ui/ConsentScreen';
 
 export default function ConsentCallingStep() {
-  const { answers, update } = useOnboarding();
+  const { answers } = useOnboarding();
   return (
     <ConsentScreen
       step="/steps/consent-calling"
@@ -12,7 +12,7 @@ export default function ConsentCallingStep() {
         'Juniper is a friendly automated companion. It calls at the times you chose, asks how things are going, and shares what matters with the care team.',
         'You can say no. You can also change your mind at any time — just say so on a call, or tell the clinic.',
       ]}
-      onDecision={(granted) => update({ consents: { ...answers.consents, aiCalling: granted } })}
+      onDecision={(granted) => ({ consents: { ...answers.consents, aiCalling: granted } })}
     />
   );
 }

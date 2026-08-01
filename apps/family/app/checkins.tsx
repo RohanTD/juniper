@@ -14,6 +14,7 @@ import { EmptyState } from '../src/ui/EmptyState';
 import { Screen } from '../src/ui/Screen';
 import { SectionHeader } from '../src/ui/SectionHeader';
 import { ThemedText } from '../src/ui/ThemedText';
+import { TopBar } from '../src/ui/TopBar';
 
 export default function CheckIns() {
   const theme = useTheme();
@@ -28,6 +29,7 @@ export default function CheckIns() {
 
   return (
     <Screen>
+      <TopBar />
       <ThemedText variant="h1" style={{ marginTop: theme.spacing.base }}>
         Check-in timeline
       </ThemedText>

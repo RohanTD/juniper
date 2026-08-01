@@ -11,12 +11,25 @@ voice service's app-level store. The onboarding app writes them at setup; the Co
 them by voice ("call me in the mornings instead") through the same store — this is what keeps
 the onboarding app genuinely one-time.
 
-FastAPI routes (bearer auth: `JUNIPER_API_TOKEN`):
+FastAPI routes:
 
 ```
 GET  /patients/{patientId}/preferences
 PUT  /patients/{patientId}/preferences
 ```
+
+**Auth — two kinds of caller, two mechanisms** (shared with §5). Both routes are keyed only on
+a path parameter, so authorization cannot be skipped for either:
+
+- **The service token** (`JUNIPER_API_TOKEN`) is the voice service and its own tooling. Trusted
+  for any patient.
+- **A Medplum user access token** is a caregiver or a patient using an app. The service does not
+  interpret it; it asks Medplum whether that token may read `Patient/{patientId}` and mirrors the
+  answer. Entitlement therefore stays derived from CareTeam membership and AccessPolicy, in one
+  place, rather than being re-implemented here.
+
+The apps ship **no** service token. A shared secret embedded in a caregiver build would be a
+master key over every patient's preferences.
 
 Body (both directions):
 
@@ -86,7 +99,34 @@ The voice service's pre-call gate refuses to dial unless the `Consent` grants `a
 `description` must be self-sufficient for a caregiver reading it at 11pm: what was said, when,
 and what has already been done about it. Never a bare "urgent".
 
-## 5. Model roster (voice service)
+## 5. Alert acknowledgements (family app ⇄ voice service)
+
+"I've seen this" from a caregiver. App-level store, same auth as §1, never FHIR:
+
+```
+GET  /patients/{patientId}/alert-acknowledgements
+PUT  /patients/{patientId}/alert-acknowledgements
+```
+
+```json
+{ "acknowledgements": [
+    { "taskId": "<Task id>", "acknowledgedAt": "<ISO8601>",
+      "acknowledgedBy": "RelatedPerson/<id>" }
+] }
+```
+
+**A caregiver acknowledgement must never touch `Task.status`.** The escalation Task (§4) is
+addressed to the *care team*; its status says what a clinician has done. Flipping it to
+`completed` because a daughter tapped a button would be a clinical falsehood authored by the
+least-qualified reader — and the caregiver AccessPolicy is read-only on `Task` regardless, so
+the write would fail rather than mislead. Acknowledgement is a fact about a family-side reader,
+so it lives family-side.
+
+PUT **replaces** the set rather than merging, which is what makes undo expressible; the cost is
+last-writer-wins between two caregivers editing simultaneously. Duplicate `taskId`s collapse,
+last write winning.
+
+## 6. Model roster (voice service)
 
 All LLM calls go through one provider abstraction (`llm/provider.py`); tests use fakes.
 Defaults (env-overridable):

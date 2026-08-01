@@ -1,11 +1,11 @@
 import { useTheme } from '@juniper/theme';
 import { router } from 'expo-router';
-import { useState } from 'react';
 import { View } from 'react-native';
 import {
   CALL_WINDOW_CHOICES,
   deviceTimezone,
   nextStepPath,
+  selectedCallWindowIds,
   toCallWindow,
   useOnboarding,
 } from '../../src/state';
@@ -16,36 +16,27 @@ import { StepHeader } from '../../src/ui/StepHeader';
 
 export default function CallTimesStep() {
   const theme = useTheme();
-  const { answers, update } = useOnboarding();
-  const [selected, setSelected] = useState<Set<string>>(() => {
-    const preset = new Set<string>();
-    for (const choice of CALL_WINDOW_CHOICES) {
-      if (answers.callWindows.some((w) => w.start === choice.start && w.days[0] === choice.days[0])) {
-        preset.add(choice.id);
-      }
-    }
-    return preset;
-  });
+  // Selection lives in the draft, not in local state, so every tap is saved.
+  const { answers, update, completeStep } = useOnboarding();
+  const selected = new Set(selectedCallWindowIds(answers));
 
   const toggle = (id: string) => {
-    setSelected((previous) => {
-      const nextSet = new Set(previous);
-      if (nextSet.has(id)) {
-        nextSet.delete(id);
-      } else {
-        nextSet.add(id);
-      }
-      return nextSet;
+    const nextSet = new Set(selected);
+    if (nextSet.has(id)) {
+      nextSet.delete(id);
+    } else {
+      nextSet.add(id);
+    }
+    const timezone = deviceTimezone();
+    update({
+      callWindows: CALL_WINDOW_CHOICES.filter((c) => nextSet.has(c.id)).map((c) =>
+        toCallWindow(c, timezone)
+      ),
     });
   };
 
   const next = () => {
-    const timezone = deviceTimezone();
-    update({
-      callWindows: CALL_WINDOW_CHOICES.filter((c) => selected.has(c.id)).map((c) =>
-        toCallWindow(c, timezone)
-      ),
-    });
+    completeStep('/steps/call-times');
     router.push(nextStepPath('/steps/call-times') as string);
   };
 

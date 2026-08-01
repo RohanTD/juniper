@@ -14,6 +14,7 @@ import { EmptyState } from '../../src/ui/EmptyState';
 import { Screen } from '../../src/ui/Screen';
 import { SectionHeader } from '../../src/ui/SectionHeader';
 import { ThemedText } from '../../src/ui/ThemedText';
+import { TopBar } from '../../src/ui/TopBar';
 
 export default function CheckInDetail() {
   const theme = useTheme();
@@ -27,8 +28,10 @@ export default function CheckInDetail() {
 
   return (
     <Screen>
+      <TopBar />
       <Pressable
         accessibilityRole="button"
+        accessibilityLabel="Back to the previous screen"
         onPress={() => router.back()}
         style={{
           flexDirection: 'row',

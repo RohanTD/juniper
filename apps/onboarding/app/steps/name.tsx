@@ -1,6 +1,6 @@
 import { useTheme } from '@juniper/theme';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { nextStepPath, subjectWord, useOnboarding } from '../../src/state';
 import { PrimaryButton } from '../../src/ui/Buttons';
@@ -10,13 +10,19 @@ import { TextField } from '../../src/ui/TextField';
 
 export default function NameStep() {
   const theme = useTheme();
-  const { answers, update } = useOnboarding();
+  const { answers, update, completeStep } = useOnboarding();
   const [given, setGiven] = useState(answers.legalName?.given ?? '');
   const [family, setFamily] = useState(answers.legalName?.family ?? '');
   const you = subjectWord(answers);
 
-  const next = () => {
+  // Written to the draft as it is typed, not on Continue: an interrupted
+  // answer should cost a word, never the screen.
+  useEffect(() => {
     update({ legalName: { given: given.trim(), family: family.trim() } });
+  }, [given, family, update]);
+
+  const next = () => {
+    completeStep('/steps/name');
     router.push(nextStepPath('/steps/name') as string);
   };
 

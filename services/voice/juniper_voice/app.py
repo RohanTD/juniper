@@ -7,6 +7,11 @@ Surfaces:
   frames <-> a Deepgram Voice Agent WebSocket session whose ``think`` stage
   calls back into this same service over HTTP (llm_endpoint.py).
 - ``GET/PUT /patients/{patientId}/preferences`` — docs/CONTRACTS.md §1.
+- ``GET/PUT /patients/{patientId}/alert-acknowledgements`` — family-side
+  "I have seen this alert" state.  Deliberately NOT ``Task.status``: the
+  escalation Task is addressed to the care team, and a caregiver flipping it to
+  ``completed`` would falsely signal that a clinician acted.  See
+  acknowledgements.py.
 - ``POST /v1/chat/completions`` — mounted from llm_endpoint.py.
 - ``GET /healthz``.
 """
@@ -28,6 +33,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import JSONResponse, Response
 
 from . import llm_endpoint
+from .acknowledgements import AlertAcknowledgements, AlertAcknowledgementStore
 from .agents.gatekeeper import scripted_greeting
 from .config import Settings
 from .context_brain import ContextBrain
@@ -119,6 +125,7 @@ def create_app(
     medplum: Any | None = None,
     registry: CallRegistry | None = None,
     preferences: PreferencesStore | None = None,
+    acknowledgements: AlertAcknowledgementStore | None = None,
     context_brain: ContextBrain | None = None,
     terminology: Terminology | None = None,
     escalation_notifier: Any | None = None,
@@ -148,6 +155,9 @@ def create_app(
             settings.medplum_client_secret or "",
         )
     preferences = preferences or PreferencesStore(settings.preferences_path)
+    acknowledgements = acknowledgements or AlertAcknowledgementStore(
+        settings.alert_acknowledgements_path
+    )
     context_brain = context_brain or ContextBrain(
         settings.context_brain_path, preferences=preferences
     )
@@ -160,6 +170,7 @@ def create_app(
     app.state.medplum = medplum
     app.state.registry = registry
     app.state.preferences = preferences
+    app.state.acknowledgements = acknowledgements
     app.state.context_brain = context_brain
     app.state.terminology = terminology
     app.state.post_call_tasks = set()
@@ -180,7 +191,11 @@ def create_app(
 
     # -- preferences API (docs/CONTRACTS.md §1) ------------------------------
     async def authorize_preferences(patient_id: str, request: Request) -> None:
-        """Authorize a preferences call for ONE patient.
+        """Authorize an app-store call for ONE patient.
+
+        Guards every per-patient app-level store route — preferences and alert
+        acknowledgements alike. Both are keyed only on a path parameter, so
+        they share one authorization decision rather than two that can drift.
 
         Two callers, two mechanisms:
 
@@ -232,6 +247,30 @@ def create_app(
         body = await request.json()
         try:
             stored = preferences.put(patient_id, Preferences.model_validate(body))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        return JSONResponse(stored.model_dump(exclude_none=True))
+
+    # -- family-side alert acknowledgements ---------------------------------
+    #
+    # The family app's "I've seen this" for an escalation Task. It writes HERE
+    # and never to Task.status: that field belongs to the care team the Task is
+    # addressed to, and a caregiver completing it would be a clinical claim
+    # made by the one reader least placed to make it. (The caregiver
+    # AccessPolicy is read-only on Task, so this is enforced on both sides.)
+    @app.get("/patients/{patient_id}/alert-acknowledgements")
+    async def get_alert_acknowledgements(patient_id: str, request: Request):
+        await authorize_preferences(patient_id, request)
+        return JSONResponse(acknowledgements.get(patient_id).model_dump(exclude_none=True))
+
+    @app.put("/patients/{patient_id}/alert-acknowledgements")
+    async def put_alert_acknowledgements(patient_id: str, request: Request):
+        await authorize_preferences(patient_id, request)
+        body = await request.json()
+        try:
+            stored = acknowledgements.put(
+                patient_id, AlertAcknowledgements.model_validate(body)
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         return JSONResponse(stored.model_dump(exclude_none=True))

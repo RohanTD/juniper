@@ -1,0 +1,73 @@
+{
+  "resourceType": "AccessPolicy",
+  "name": "Juniper Patient Onboarding Policy",
+  "compartment": { "reference": "%patient" },
+  "resource": [
+    {
+      "resourceType": "Patient",
+      "criteria": "Patient?_id=%patient.id",
+      "_comment": "Writable: onboarding sets name, birthDate, telecom and communication.language on the patient's OWN record only. %patient.id is bound per-membership, so this can never reach another patient."
+    },
+    {
+      "resourceType": "RelatedPerson",
+      "criteria": "RelatedPerson?_compartment=%patient",
+      "_comment": "Writable: the family contact the patient names during onboarding."
+    },
+    {
+      "resourceType": "CareTeam",
+      "criteria": "CareTeam?_compartment=%patient",
+      "_comment": "Writable: the CareTeam that carries the family contact as a participant. This is what later derives caregiver access — see medplum/README.md."
+    },
+    {
+      "resourceType": "Consent",
+      "criteria": "Consent?_compartment=%patient",
+      "_comment": "Writable, and THE reason this policy exists. Medplum's built-in 'Default Patient Access Policy' grants Patient/RelatedPerson/CareTeam but has no Consent entry at all, and Medplum is default-deny — so a patient signed in with the stock policy completes all thirteen onboarding screens and then gets 'Forbidden' on submit, at the only step that cannot be skipped. Onboarding writes three separate Consents (calling, recording, family sharing) and the whole voice system is consent-gated on them. Verified live 2026-08-01."
+    },
+    {
+      "resourceType": "AllergyIntolerance",
+      "criteria": "AllergyIntolerance?_compartment=%patient",
+      "readonly": true,
+      "_comment": "From here down: reads broad, writes narrow. A patient may see their own chart — the same principle applied to the voice service — but no app hands a patient a way to author clinical data about themselves. Every entry is scoped to their own compartment."
+    },
+    {
+      "resourceType": "Condition",
+      "criteria": "Condition?_compartment=%patient",
+      "readonly": true
+    },
+    {
+      "resourceType": "MedicationRequest",
+      "criteria": "MedicationRequest?_compartment=%patient",
+      "readonly": true
+    },
+    {
+      "resourceType": "MedicationStatement",
+      "criteria": "MedicationStatement?_compartment=%patient",
+      "readonly": true
+    },
+    {
+      "resourceType": "Observation",
+      "criteria": "Observation?_compartment=%patient",
+      "readonly": true
+    },
+    {
+      "resourceType": "Encounter",
+      "criteria": "Encounter?_compartment=%patient",
+      "readonly": true
+    },
+    {
+      "resourceType": "Appointment",
+      "criteria": "Appointment?_compartment=%patient",
+      "readonly": true
+    },
+    {
+      "resourceType": "CarePlan",
+      "criteria": "CarePlan?_compartment=%patient",
+      "readonly": true
+    },
+    {
+      "resourceType": "Goal",
+      "criteria": "Goal?_compartment=%patient",
+      "readonly": true
+    }
+  ]
+}

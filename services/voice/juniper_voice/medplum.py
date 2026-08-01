@@ -200,6 +200,29 @@ def require_dialing_consent(consent: ConsentStatus, patient_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
+class CareTeamMember:
+    """One CareTeam participant, carrying the human-readable label with it.
+
+    The label matters outside the brief.  ``Task.owner`` on an escalation is
+    the only place a caregiver can learn *who* their 11pm alert went to, and
+    the caregiver AccessPolicy does not grant ``CareTeam`` or ``Practitioner``
+    — so a bare ``{"reference": "Practitioner/abc"}`` renders as nothing at
+    all on their side.  ``Reference.display`` is denormalised precisely for
+    this case in FHIR: it survives where the referenced resource is unreadable.
+    """
+
+    reference: str
+    display: str | None = None
+    role: str | None = None
+
+    def as_reference(self) -> dict[str, str]:
+        ref: dict[str, str] = {"reference": self.reference}
+        if self.display:
+            ref["display"] = self.display
+        return ref
+
+
+@dataclass(frozen=True)
 class EHRBrief:
     text: str
     patient_id: str
@@ -208,9 +231,14 @@ class EHRBrief:
     language: str | None
     phone: str | None
     consent: ConsentStatus
-    care_team_refs: tuple[str, ...]
+    care_team: tuple[CareTeamMember, ...]
     prior_notes: tuple[dict[str, Any], ...]
     token_estimate: int
+
+    @property
+    def care_team_refs(self) -> tuple[str, ...]:
+        """Bare references, for callers that only need identity."""
+        return tuple(member.reference for member in self.care_team)
 
 
 def estimate_tokens(text: str) -> int:
@@ -515,12 +543,26 @@ def _compile_brief_from_snapshot(
     for communication in patient.get("communication", []) or []:
         language = _coding_display(communication.get("language")) or language
 
-    care_team_refs: list[str] = []
+    care_team: list[CareTeamMember] = []
+    seen_refs: set[str] = set()
     for team in care_teams:
         for participant in team.get("participant", []) or []:
-            ref = (participant.get("member") or {}).get("reference")
-            if ref:
-                care_team_refs.append(ref)
+            member = participant.get("member") or {}
+            ref = member.get("reference")
+            # A patient on two CareTeams (clinic + home health) lists the same
+            # PCP twice; escalation picks care_team[0] and the brief prints the
+            # roster, so the duplicate would be visible in both.
+            if not ref or ref in seen_refs:
+                continue
+            seen_refs.add(ref)
+            care_team.append(
+                CareTeamMember(
+                    reference=ref,
+                    display=member.get("display"),
+                    role=_coding_display(next(iter(participant.get("role") or []), None))
+                    or None,
+                )
+            )
 
     # -- sections (priority: lower number survives budget pressure longer) --
     sections: list[_Section] = []
@@ -622,7 +664,7 @@ def _compile_brief_from_snapshot(
         language=language,
         phone=phone,
         consent=consent,
-        care_team_refs=tuple(care_team_refs),
+        care_team=tuple(care_team),
         prior_notes=tuple(prior_notes),
         token_estimate=estimate_tokens(text),
     )
