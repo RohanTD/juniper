@@ -24,8 +24,10 @@ sync. The claims that matter to Juniper, taken from their docs rather than their
   required, vector-only scoring). Sessions are queried separately from loaded indexes.
 - Embedding models: `moss-minilm` (default, fast) and `moss-mediumlm` (higher accuracy),
   plus bring-your-own-embeddings. A resumed session must use the stored model.
-- **HIPAA is Enterprise-only** (as are SOC 2, data residency, and VPC deployment). Lower
-  tiers meter storage/ingest/voice-minutes; local queries are free on every tier.
+- Their published pricing lists **HIPAA, SOC 2, data residency and VPC deployment under
+  Enterprise**. Per project direction this plan assumes HIPAA compliance and a signed BAA
+  (see the assumption note below). Storage/ingest/egress are metered; local queries are
+  free on every tier.
 - Python SDK: `pip install moss`, Python ≥3.10, async API.
 
 Their documented ["Live-Call Context" pattern](https://docs.moss.dev/docs/build/live-call-context)
@@ -87,49 +89,77 @@ the full transcript reaches the documentation prompt stays load-bearing.
 Everything else — the bulk of the brief, the Context Brain digest, the advisors' context —
 moves to retrieval.
 
-## The PHI boundary decides the deployment shape
+## Deployment shape: cloud-persistent, still local at query time
 
-The EHR, the transcripts, and the memories are PHI. Moss offers HIPAA compliance (BAA, VPC,
-residency) **only on Enterprise**. That gives two modes, and the architecture must run in
-both:
+> **Assumption, set by project direction (2026-08-01):** Moss is treated as HIPAA-compliant
+> with a BAA in place. Their published pricing lists HIPAA under Enterprise, so the contract
+> is a procurement item, not an architectural one — but it must be signed before real PHI
+> lands. Everything below assumes it.
 
-**Mode L — local-only (default; pilot-safe on any tier).** Every Juniper index is a
-`SessionIndex` that is **never pushed**. Documents are embedded in-process by the Rust core;
-queries are in-memory; Moss's cloud sees credential validation and nothing else. Long-term
-indexes are rebuilt at pre-call time from our own systems of record — which is exactly what
-the brief compiler already does every call, so this adds embedding time to an existing
-pre-call step, not a new dependency. PHI never leaves our process.
+That assumption removes the reason to keep indexes ephemeral and makes the **durable cloud
+path the default**. What it does *not* change is the latency architecture, and this is the
+distinction that matters most:
 
-**Mode C — cloud-persistent (Enterprise + BAA, later).** Long-term indexes become real
-cloud indexes (`create_index`/`load_index` with `auto_refresh`); call sessions may
-`push_index()` for cross-call resume and Moss's cross-agent handoff becomes available
-(e.g., a future clinician console sharing the patient's context). Same code, one config
-flag — the retrieval interface below hides the difference.
+**`load_index()` is still mandatory. The cloud is for persistence and hydration, never for
+query time.** Moss's own numbers are ~1–10ms in-memory versus ~100–500ms against their cloud
+API — a cloud query per turn would blow the 800ms budget by itself. Every per-turn query
+still runs in-process against a loaded index. HIPAA compliance buys durability, not a
+different query path.
 
-Either way, one principle carries over from the locked decisions unchanged: **Medplum and
-the app-level store remain the systems of record. Moss is a runtime, not a store.** Indexes
-are always derivable projections; deleting every Moss asset must lose nothing but warm-up
-time. (This also keeps the caregiver access model intact: Moss serves only the voice
-service's process, inside the same trust boundary as the EHR brief today. Nothing new is
-readable by any app.)
+What becomes possible:
 
-Diligence before build (blocking): confirm with Moss that (a) in local-session mode no
-document content is transmitted (telemetry included) — the docs say embedding is local and
-only auth touches the network, but for PHI this needs a written answer; (b) a BAA is
-available on Enterprise for Mode C; (c) the Python SDK wheel supports our Python 3.14
-runtime (docs say ≥3.10; the Rust core makes this a wheel-availability question).
+- **Indexes survive across calls.** `chart-{patient}` and `memories-{patient}` become real
+  cloud indexes, hydrated at call start with `load_index()` — pre-embedded, so no embedding
+  work happens on the pre-call path at all.
+- **Pre-call gets faster, not slower.** Today's brief compiler does a broad FHIR read and
+  compiles every call. With a durable index, the pre-call path becomes a *delta*
+  reconciliation: fetch only `_lastUpdated=gt{index_built_at}` from Medplum and upsert what
+  changed. Embedding 400 observations happens once, not once per call.
+- **`auto_refresh` keeps warm processes current** without a rebuild, which matters when
+  several concurrent calls share a host.
+- **Cross-agent handoff** becomes available for whatever follows the pilot — a clinician
+  console or an SMS follow-up agent can load the same patient context.
+
+What is newly required, precisely *because* PHI now persists in someone else's system:
+
+- **Consent revocation must propagate.** Today revoking `ai-calling` simply stops the next
+  call, because nothing is retained outside Medplum. With durable indexes, revocation (or a
+  patient deletion request) must also `delete_index("chart-{patient}")` and
+  `delete_index("memories-{patient}")`. This is a new code path with a test, not an
+  operational note — it is the one place where making Moss durable adds a genuine obligation.
+- **Retention follows the record.** Moss indexes inherit the patient's retention policy;
+  index deletion is part of patient offboarding.
+- **Hydration is a new network dependency at call start.** It did not exist when indexes
+  were rebuilt locally. It fails soft (see below) into brief mode.
+
+One principle from the locked decisions carries over unchanged and is now *more* important:
+**Medplum and the app-level store remain the systems of record. Moss is a durable projection,
+not a second record.** Every index must be reproducible by re-projecting from Medplum and the
+Context Brain store; deleting all Moss state must cost nothing but rebuild time. That property
+is what keeps the consent-revocation path honest and prevents the two systems from silently
+diverging — and it is asserted by a test.
+
+The caregiver access model is untouched: Moss serves only the voice service's process, inside
+the same trust boundary the EHR brief already occupies. Nothing new is readable by any app.
+
+Remaining diligence (no longer blocking, but confirm before production): the BAA itself, and
+whether the Python SDK ships a wheel for our 3.14 runtime (docs say ≥3.10; the Rust core makes
+this a build-availability question, not a language-version one).
 
 ## Target architecture — three retrieval surfaces
 
 All three are per-patient or per-call, embedded with the same model (`moss-mediumlm` as the
 working hypothesis — clinical text rewards the accuracy tier, and embedding happens at
-pre-call/off-path moments; measure against `moss-minilm` in Phase A before committing).
+enrollment, post-call, and off-path moments, never on the turn's critical path; measure
+against `moss-minilm` in Phase A before committing. Note a resumed index adopts its stored
+model, so the model choice hardens at first enrollment — pick before Phase 0 patients are
+real, or plan a re-embed migration).
 
-### 1. `chart-{patient_id}` — the EHR index (long-term)
+### 1. `chart-{patient_id}` — the EHR index (long-term, cloud-persistent)
 
-Built pre-call by the same broad FHIR read that builds today's brief. Instead of compiling
-prose and trimming to budget, each fact becomes one document — compiled *line*, not raw
-FHIR JSON:
+A durable cloud index, created on patient enrollment and kept current by delta upsert.
+Instead of compiling prose and trimming to budget, each FHIR fact becomes one document —
+a compiled *line*, not raw FHIR JSON:
 
 ```
 { id: "medreq-<fhir-id>",
@@ -143,9 +173,21 @@ FHIR JSON:
   the 4M agent can filter (`domain $eq medication`) when probing a specific slot.
 - Recency still matters, but as *metadata for filtering/boosting*, not as a deletion
   criterion. Nothing is dropped for budget anymore.
-- Rebuilt fresh each call in Mode L (upserted incrementally in Mode C).
 
-### 2. `memories-{patient_id}` — the conversational index (long-term)
+**Lifecycle.** Created once at enrollment from a full chart read. Before each call, a delta
+reconciliation fetches only `_lastUpdated=gt{index_built_at}` from Medplum and upserts the
+changed resources — so the expensive part (embedding a heavy history) happens once rather
+than per call, and pre-call work shrinks to a hydrate plus a small upsert. `load_index(...,
+auto_refresh=True)` keeps warm processes current when several calls share a host. A
+Medplum `Subscription` → Bot → upsert path is the eventual push-based upgrade; delta
+reconciliation is the pragmatic default and needs no new infrastructure.
+
+The `index_built_at` watermark lives in the app-level store next to the other
+non-FHIR state. If it is missing or the index is absent, the reconciler falls back to a full
+rebuild — which is also the recovery path after a `delete_index`, and what makes the
+"derivable projection" property true rather than aspirational.
+
+### 2. `memories-{patient_id}` — the conversational index (long-term, cloud-persistent)
 
 The "past conversations" feed — this is the restructured Context Brain:
 
@@ -164,7 +206,13 @@ The "past conversations" feed — this is the restructured Context Brain:
 
 `context_brain.py` keeps its authoring API (`add_memory`, `add_negative_constraint`,
 write-back) and its JSON store as the system of record; it gains a projection step that
-maintains this index. The `digest()` method survives only as the fallback path (below).
+upserts into this index post-call. The `digest()` method survives only as the fallback path
+(below).
+
+Keeping the JSON store authoritative even though the index is now durable is deliberate: it
+is what makes re-projection possible after a deletion, keeps the negative-constraint
+authoring path independent of any Moss availability, and means a Moss outage degrades recall
+rather than losing memories.
 
 ### 3. The live-call session — `call-{call_id}` (short-term)
 
@@ -178,10 +226,23 @@ A `SessionIndex` opened at call start. After each emit — **off the critical pa
 
 4M findings are appended as they're recorded (`mark_domain_complete` → a
 `{ type: "finding", domain }` document), so the Closer's follow-up retrieval sees them.
-The session is **never pushed** in either mode: the `TranscriptBuffer` is already the
-durable source of truth, and pushing would create a second PHI store outside Medplum for
-no gain — cross-call continuity comes from `memories-{patient_id}`, written by the
-post-call pass through our own store.
+
+**The session stays ephemeral — `push_index()` is not called**, even though HIPAA compliance
+now makes it permissible. The reasoning changed but the conclusion did not:
+
+- The durable raw transcript already exists in Medplum as a `Binary` +
+  `DocumentReference` — that is the audit trail, and the locked decision that makes every
+  machine-authored clinical claim checkable. A second verbatim copy in Moss would be a
+  parallel record that has to be retained, deleted and reconciled in lockstep with the first,
+  for no retrieval benefit.
+- Cross-call continuity is better served by the *curated* chunks the post-call pass writes
+  into `memories-{patient_id}`. Resuming a raw prior session would surface every "mm-hm"
+  alongside the substance; the chunking step is where editorial judgment happens.
+
+One narrow exception worth building later, not now: if a call drops and reconnects, resuming
+the session would restore in-call recall. That requires the same treatment for
+`TranscriptBuffer` (which is also in-process), so it belongs to a mid-call recovery design
+rather than to this one.
 
 ### The per-turn path
 
@@ -216,24 +277,36 @@ are deterministic.
 
 Retrieval must fail *soft*: any Moss error or timeout (per-query timeout ~50ms) degrades
 that turn to core header + transcript window — which is a slightly thinner version of
-today's behavior, not a broken call. If the SDK fails at pre-call (index build), the call
-proceeds in **brief mode**: the existing `compile_ehr_brief` + `digest()` path, kept alive
-behind `JUNIPER_CONTEXT_MODE=brief|moss` precisely so the current architecture remains the
-tested fallback. The urgency filter, consent gate, and escalation path have no Moss
-dependency whatsoever.
+today's behavior, not a broken call.
+
+**Hydration failure is the new one.** Making indexes cloud-persistent introduces a network
+dependency at call start that the rebuild-locally design did not have. If `load_index()`
+fails or times out (budget it at ~2s, since it happens pre-dial and not on the latency
+path), the call proceeds in **brief mode**: the existing `compile_ehr_brief` + `digest()`
+path, kept alive behind `JUNIPER_CONTEXT_MODE=brief|moss` precisely so the current
+architecture remains the tested fallback rather than dead code. A patient still gets their
+call; they get today's quality of context instead of tomorrow's.
+
+Delta reconciliation failing is softer still — the index is stale by one call's worth of
+chart changes, which is logged and retried next call, not a reason to degrade the call.
+
+The urgency filter, consent gate, escalation path, and the entire documentation pass have
+no Moss dependency whatsoever. A total Moss outage costs conversation quality and nothing
+else — no safety property, no clinical record, no write.
 
 ## Module-by-module restructuring
 
 | Module | Change |
 |---|---|
-| `retrieval.py` (new) | The only module that imports `moss`. `PatientRetrieval` protocol: `build_chart_index(brief_facts)`, `build_memories_index(...)`, `open_call_session(call_id)`, `retrieve(utterance, advisory, k) -> RetrievedContext`, `append_turn(...)`, `probe_domain(domain) -> [docs]`. A `FakeRetrieval` (deterministic, fixture-driven) mirrors `FakeProvider` for tests. Mode L/C and the fallback live behind this seam. |
-| `medplum.py` | `compile_ehr_brief` splits: `compile_core_header()` (identity, consent, allergies, active med names, care-team refs — small, deterministic, always-pinned) and `extract_chart_documents()` (the per-resource compiled lines + metadata that feed the chart index). The existing full-brief compiler remains for brief mode. Consent gate unchanged. |
+| `retrieval.py` (new) | The only module that imports `moss`. `PatientRetrieval` protocol: `ensure_indexes(patient_id)` (create-or-hydrate + delta upsert), `open_call_session(call_id)`, `retrieve(utterance, advisory, k) -> RetrievedContext`, `append_turn(...)`, `probe_domain(domain) -> [docs]`, `project_memories(...)`, `purge_patient(patient_id)` (consent revocation / offboarding). A `FakeRetrieval` (deterministic, fixture-driven) mirrors `FakeProvider` for tests. Hydration, delta reconciliation and the fallback live behind this seam. |
+| `medplum.py` | `compile_ehr_brief` splits: `compile_core_header()` (identity, consent, allergies, active med names, care-team refs — small, deterministic, always-pinned) and `extract_chart_documents(since=None)` (the per-resource compiled lines + metadata that feed the chart index; `since` drives delta reconciliation via `_lastUpdated`). The existing full-brief compiler remains for brief mode. Consent gate unchanged. |
+| `consent`/offboarding path | Revoking `ai-calling` or deleting a patient calls `purge_patient()`, deleting both durable indexes. New code path, new test — the obligation durable PHI storage creates. |
 | `context_brain.py` | Keeps the JSON store + authoring API + post-call write-back as system of record; gains `project_to_index(retrieval)` and transcript chunking in the write-back. `digest()` demoted to fallback. Negative constraints continue to flow to the pinned header and the compassion filter — never through retrieval. |
 | `controller.py` | Holds a `PatientRetrieval` instead of (brief text + digest) in moss mode; `_conversation_turn` awaits `retrieve()` before compose; `_after_emit` appends the turn to the session; slow-loop refreshes pass `probe_domain` results to the advisors. Phase machine, coverage, escalation, budgets: untouched. |
 | `agents/companion.py` | `compose()` takes `core_header` + `retrieved: RetrievedContext` in place of `brief_text`/`digest`; prompt renders retrieved facts as a labeled context block ("From her chart:", "From past conversations:", "Earlier in this call:") with dates. Persona, tools, rewrite: unchanged. |
 | `agents/fourm.py`, `closer.py` | Accept per-domain probe results; advisory schema unchanged (they still emit intent, never prose). |
 | `documentation.py` | **No change.** Full transcript in, note + family summary out. |
-| `llm_endpoint.py`, `app.py` | No wire change. `app.py`'s `prepare_call` builds indexes during pre-call setup; hangup path closes/discards the session. |
+| `llm_endpoint.py`, `app.py` | No wire change. `app.py`'s `prepare_call` hydrates the two durable indexes and reconciles the chart delta during pre-call setup; hangup path discards the session (never pushed). |
 | `config.py` | `MOSS_PROJECT_ID/KEY`, `JUNIPER_CONTEXT_MODE`, `JUNIPER_MOSS_MODEL`, retrieval `top_k`s, per-query timeout. |
 
 ## Verification additions
@@ -266,41 +339,67 @@ where noted:
   12-turn window alone would not.
 - **In-call findings reach the Closer.** `mark_domain_complete` findings appended to the
   session surface in the Closer's gap probes.
-- **PHI boundary (Mode L).** With the SDK in session mode, assert no push occurs and no
-  index-management cloud call carries document content (instrument the transport in test).
+- **Consent revocation purges durable state.** Revoke `ai-calling` for a seeded patient;
+  assert `purge_patient()` deletes both indexes and that a subsequent call attempt is
+  refused by the existing consent gate before any retrieval happens. This is the test that
+  makes durable PHI storage defensible.
+- **Derivable-projection property.** Delete all Moss state, re-run enrollment projection
+  from Medplum + the Context Brain store, and assert the rebuilt indexes return the same
+  documents for a fixed probe set. Nothing lives only in Moss.
+- **Delta reconciliation.** Add a `Condition` to a seeded patient between two calls; assert
+  only the changed resource is upserted (not a full rebuild) and that it is retrievable on
+  the second call.
+- **Session is never pushed.** Assert `push_index` is not called on the call session across
+  a full replayed call, including the hangup path — the raw transcript has exactly one
+  durable home, and it is Medplum.
+- **Hydration failure falls back.** `load_index` raises/times out; assert the call proceeds
+  in brief mode with the existing compiled brief, and that the fallback is logged rather
+  than silent.
 - **Write-back projection.** Post-call, new memories and transcript chunks appear in the
-  memories store and its index projection; deleting all Moss state and re-projecting from
-  the stores reproduces it (the "runtime, not store" property, tested).
+  Context Brain store and are upserted into the memories index.
 
 ## Rollout
 
-- **Phase A — shadow.** Build indexes pre-call and run per-turn retrieval, *logging only*
-  (nothing injected). Measure: retrieval latency distribution, hit-rate against fixture
-  probes, index build time for a heavy-history patient (the 400-observation fixture),
+Ordered so the durable-state obligations land *before* real PHI does, not after.
+
+- **Phase 0 — enrollment projection and purge.** Build `ensure_indexes()` and
+  `purge_patient()` against the two seeded test patients, with the consent-revocation and
+  derivable-projection tests green. Deliberately first: the moment durable indexes hold PHI,
+  the deletion path must already exist and be tested. Nothing is injected into a call yet.
+- **Phase A — shadow.** Hydrate pre-call and run per-turn retrieval, *logging only*.
+  Measure: retrieval latency distribution, hydration time, hit-rate against fixture probes,
+  full-build time for a heavy-history patient (the 400-observation fixture),
   minilm-vs-mediumlm quality on clinical text, memory per concurrent call. Gates: p95
-  retrieval < 20ms; build < 2s heavy; planted-fact hit-rate ≥ 95%.
-- **Phase B — inject.** Companion gets core header + retrieved context; brief mode remains
-  default in config until fixture replays show the moss-mode notes capture every planted
-  finding the brief-mode notes do. Latency CI extended.
+  retrieval < 20ms; hydration p95 < 1s; full build < 30s (it is now a one-time enrollment
+  cost, not per-call, so the old 2s target no longer applies); planted-fact hit-rate ≥ 95%.
+- **Phase B — inject.** Companion gets core header + retrieved context; brief mode stays
+  the configured default until fixture replays show moss-mode notes capture every planted
+  finding brief-mode notes do. Latency CI extended with the `moss_retrieval` stage.
 - **Phase C — advisors + session recall.** Domain probes for 4M/Closer; live session
   appends; the 40-turn recall test goes green.
-- **Phase D — retire the bulk brief as default.** Moss mode becomes default; brief mode
-  stays as the tested fallback. Memories write-back projection lands; digest demoted.
-- **Phase E — Mode C (requires Enterprise + BAA).** Cloud persistence, `auto_refresh`
-  hydration, cross-call session resume, and cross-agent handoff for whatever comes after
-  the pilot (clinician console, SMS follow-ups). Not before the BAA exists.
+- **Phase D — delta reconciliation + memories write-back.** Chart index stays current
+  between calls; post-call projection of memories and transcript chunks lands; `digest()`
+  demoted to fallback.
+- **Phase E — default flip.** Moss mode becomes the configured default; brief mode remains
+  as the tested fallback, exercised by CI forever.
+- **Later, unblocked but not scheduled:** Medplum `Subscription` → Bot push-based chart
+  updates (replacing delta reconciliation), cross-agent handoff for a clinician console or
+  follow-up channel, and mid-call session resume as part of a reconnect design.
 
 ## Costs and open questions
 
-Local queries are unmetered on every tier, and Mode L keeps cloud usage near zero — the
-Developer tier's 3-index cap doesn't bind because Mode L indexes are sessions, not cloud
-indexes. Budget for Start-up ($200/mo) when Mode C trials begin; Enterprise pricing is a
-conversation gated on the BAA anyway. Their "voice-minutes" metric applies to their hosted
-Founding Agent product, not the SDK path we're taking — worth confirming alongside the
-PHI questions.
+Per-turn queries stay local and unmetered on every tier, so cost scales with *storage and
+sync*, not conversation volume: two durable indexes per enrolled patient, plus ingest on
+enrollment and on each delta. That is a per-patient footprint to model before a large pilot
+— chart documents for a heavy-history patient are the bulk of it, and the memories index
+grows with every call. Enterprise is the tier this lands on anyway given the compliance
+posture; get storage and ingest projections into that pricing conversation rather than
+discovering them at the 10 GB Start-up ceiling. Their "voice-minutes" metric applies to
+their hosted Founding Agent product, not the SDK path we're taking — worth confirming.
 
-Open questions to resolve in Phase A: mediumlm vs minilm on clinical vocabulary (BYOE with
-a clinical embedding model is the escape hatch if neither is good enough); per-session
-memory footprint × concurrent calls on one host; whether chart facts should also carry a
-keyword-side boost for drug names (hybrid alpha tuning); and the three blocking diligence
-items in the PHI section.
+Open questions for Phase A: mediumlm vs minilm on clinical vocabulary (BYOE with a clinical
+embedding model is the escape hatch if neither is good enough); per-index memory footprint ×
+concurrent calls on one host, now that two durable indexes stay loaded per active patient;
+whether chart facts want a keyword-side boost for drug names (hybrid alpha tuning); and
+whether `auto_refresh` polling is worth its overhead given that delta reconciliation already
+runs pre-call.
