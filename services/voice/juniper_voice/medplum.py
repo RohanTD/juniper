@@ -232,6 +232,56 @@ def _medication_display(resource: Mapping[str, Any]) -> str:
     return _coding_display(resource.get("medicationCodeableConcept")) or "medication"
 
 
+def _unit(quantity: Mapping[str, Any]) -> str:
+    """UCUM annotation-only units (`{score}`, `{beats}/min`) are machine
+    syntax, not something to read out in a prompt."""
+    unit = str(quantity.get("unit") or "")
+    return "" if unit.startswith("{") and unit.endswith("}") else unit
+
+
+def _quantity_text(quantity: Mapping[str, Any]) -> str:
+    value = quantity.get("value")
+    if value is None:
+        return ""
+    return f"{value} {_unit(quantity)}".strip()
+
+
+def _observation_value(resource: Mapping[str, Any]) -> str:
+    """Render an Observation's value.
+
+    Component observations must be handled explicitly: blood pressure — the
+    single most relevant vital for this population — carries its systolic and
+    diastolic readings in ``component[]`` and has no top-level value at all, so
+    a valueQuantity-only reader silently renders a bare "Blood pressure" label
+    with no numbers behind it.
+    """
+    quantity = resource.get("valueQuantity") or {}
+    if quantity:
+        text = _quantity_text(quantity)
+        return f" {text}" if text else ""
+    if resource.get("valueString"):
+        return f" {resource['valueString']}"
+    concept = _coding_display(resource.get("valueCodeableConcept"))
+    if concept:
+        return f" {concept}"
+
+    parts: list[str] = []
+    for component in resource.get("component", []) or []:
+        label = _coding_display(component.get("code"))
+        text = _quantity_text(component.get("valueQuantity") or {})
+        if not text:
+            text = _coding_display(component.get("valueCodeableConcept"))
+        if not text:
+            continue
+        # "Systolic blood pressure" under a "Blood pressure" heading is noise;
+        # keep the distinguishing word only.
+        short = label.replace("blood pressure", "").replace("Blood pressure", "").strip()
+        parts.append(f"{short} {text}".strip() if short else text)
+    if parts:
+        return " " + "/".join(parts) if len(parts) == 2 else " " + ", ".join(parts)
+    return ""
+
+
 @dataclass
 class _Section:
     priority: int  # lower = kept longer under budget pressure
@@ -388,12 +438,7 @@ async def compile_ehr_brief(
     obs = _Section(3, "Recent observations")
     for resource in observations:
         display = _coding_display(resource.get("code"))
-        value = resource.get("valueQuantity") or {}
-        rendered = ""
-        if value:
-            rendered = f" {value.get('value', '')} {value.get('unit', '')}".rstrip()
-        elif resource.get("valueString"):
-            rendered = f" {resource['valueString']}"
+        rendered = _observation_value(resource)
         when = (resource.get("effectiveDateTime") or "")[:10]
         if display:
             obs.lines.append(f"{when}: {display}{rendered}".strip())

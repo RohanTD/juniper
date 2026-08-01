@@ -59,6 +59,56 @@ async def test_family_sharing_is_not_required_to_dial(medplum, terminology):
     assert brief.consent.family_sharing is False
 
 
+async def test_component_observations_render_their_readings(medplum, terminology):
+    """Blood pressure carries systolic/diastolic in component[] with no
+    top-level value. A valueQuantity-only reader renders a bare "Blood
+    pressure" label with no numbers — the single most relevant vital for this
+    population, silently blank. Caught against the live server; kept here.
+    """
+    seed_full_patient(medplum, terminology)
+    medplum.seed(
+        {
+            "resourceType": "Observation",
+            "subject": {"reference": "Patient/pat-1"},
+            "code": {"text": "Blood pressure"},
+            "effectiveDateTime": "2026-07-29",
+            "component": [
+                {
+                    "code": {"text": "Systolic blood pressure"},
+                    "valueQuantity": {"value": 136, "unit": "mmHg"},
+                },
+                {
+                    "code": {"text": "Diastolic blood pressure"},
+                    "valueQuantity": {"value": 78, "unit": "mmHg"},
+                },
+            ],
+        }
+    )
+    brief = await compile_ehr_brief(medplum, "pat-1", terminology)
+
+    assert "136" in brief.text
+    assert "78" in brief.text
+    assert "mmHg" in brief.text
+
+
+async def test_ucum_annotation_units_are_not_rendered(medplum, terminology):
+    """`{score}` is UCUM machine syntax, not a unit to read aloud."""
+    seed_full_patient(medplum, terminology)
+    medplum.seed(
+        {
+            "resourceType": "Observation",
+            "subject": {"reference": "Patient/pat-1"},
+            "code": {"text": "PHQ-2 depression screen"},
+            "effectiveDateTime": "2026-07-29",
+            "valueQuantity": {"value": 1, "unit": "{score}"},
+        }
+    )
+    brief = await compile_ehr_brief(medplum, "pat-1", terminology)
+
+    assert "PHQ-2 depression screen 1" in brief.text
+    assert "{score}" not in brief.text
+
+
 async def test_brief_carries_identity_medications_and_recent_events(medplum, terminology):
     seed_full_patient(medplum, terminology)
     brief = await compile_ehr_brief(medplum, "pat-1", terminology)

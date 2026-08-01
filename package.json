@@ -10,7 +10,12 @@
   "scripts": {
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test:voice": "cd services/voice && ../../.venv/bin/python -m pytest"
+    "test:voice": "cd services/voice && ../../.venv/bin/python -m pytest",
+    "test:all": "npm run test:voice && npm test && node medplum/scripts/check.mjs",
+    "dev:voice": ".venv/bin/python -m uvicorn juniper_voice.app:create_app --factory --reload --port 8000",
+    "dev:onboarding": "npm run -w @juniper/onboarding start",
+    "dev:family": "npm run -w @juniper/family start",
+    "medplum:check": "node medplum/scripts/check.mjs"
   },
   "engines": {
     "node": ">=20"

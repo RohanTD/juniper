@@ -15,7 +15,23 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install
-        run: pip install -e "services/voice[dev]"
+        run: pip install -e "services/voice[dev]" --config-settings editable_mode=compat
+      - name: Import check (the test suite sets its own pythonpath, so a green
+          test run does not prove the installed package is importable)
+        run: python -c "import juniper_voice, juniper_voice.app"
+      - name: App boots and serves the contracted routes
+        run: |
+          python -c "
+          from juniper_voice.app import create_app
+          from juniper_voice.config import Settings
+          app = create_app(settings=Settings(api_token='ci'), provider=object(), medplum=None)
+          # Read paths from the OpenAPI schema, not app.routes: current FastAPI
+          # keeps included routers as a lazy wrapper, so app.routes does not list
+          # the Deepgram endpoint even though it is served.
+          paths = set(app.openapi()['paths'])
+          assert {'/healthz', '/v1/chat/completions', '/twilio/voice'} <= paths, sorted(paths)
+          print('routes ok:', sorted(paths))
+          "
       - name: Test
         run: python -m pytest services/voice/tests -q
 
