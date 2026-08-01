@@ -50,6 +50,26 @@ cd medplum && ./scripts/apply.sh   # requires MEDPLUM_* env, see medplum/README.
 
 Environment variables are documented in `services/voice/.env.example`. Secrets are never committed.
 
+## What is built, and what still needs a live credential
+
+Everything in this repo is complete and tested offline — 123 tests across the
+voice service, the theme, and both apps, plus static integrity checks over the
+Medplum configuration. Three steps require credentials this repo does not carry
+and must be run once against a live project:
+
+1. **Provision the Medplum project.** `cd medplum && ./scripts/apply.sh` with
+   `MEDPLUM_BASE_URL` / `MEDPLUM_CLIENT_ID` / `MEDPLUM_CLIENT_SECRET` set. It is
+   idempotent (conditional creates/updates), so re-running is safe. Then bind the
+   caregiver `AccessPolicy` per-patient at `ProjectMembership` time — see
+   [medplum/README.md](medplum/README.md) for the exact invite payload, since the
+   policy grants nothing until its `%patient` parameter is bound.
+2. **Create the voice service's ClientApplication secret** in the Medplum app and
+   put it in `services/voice/.env` — no secret is committed.
+3. **Place a live call.** Twilio number + a public tunnel to `app.py`, then call
+   yourself and role-play a patient before any real one. Listen for gaps after
+   *every* turn: this architecture's latency risk is continuous, not concentrated
+   at transitions.
+
 ## Verification
 
 Every safety property in the plan has a test: escalation precedence, coverage escalation,
