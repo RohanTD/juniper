@@ -215,7 +215,7 @@ class _ScriptedMoss:
 
 
 def _retrieval(tmp_path, client, patient="pat-1") -> MossRetrieval:
-    async def chart_supplier():
+    async def chart_supplier(since=None):
         return [], "2026-08-01T00:00:00+00:00"
 
     return MossRetrieval(
@@ -230,34 +230,80 @@ def _retrieval(tmp_path, client, patient="pat-1") -> MossRetrieval:
     )
 
 
-async def test_purge_deletes_both_indexes_and_clears_state(tmp_path):
+async def test_purge_deletes_both_indexes_and_leaves_a_tombstone(tmp_path):
+    """The tombstone SURVIVES a successful purge. Clearing it on success is
+    what let a honoured deletion be silently undone by the next call's
+    hydration; only explicit re-enrollment may clear it."""
     client = _ScriptedMoss()
     retrieval = _retrieval(tmp_path, client)
     ok = await retrieval.purge_patient()
 
     assert ok is True
     assert client.deleted == ["juniper-chart-pat-1", "juniper-memories-pat-1"]
-    assert not retrieval._state.purge_pending("pat-1")
+    assert retrieval._state.is_purged("pat-1")
+    assert not retrieval._state.purge_incomplete("pat-1")
+
+    # And the deletion is not undone by a subsequent call.
+    assert await retrieval.ensure_ready() is False
+
+    # Only re-enrollment clears it.
+    retrieval._state.clear_purge("pat-1")
+    assert not retrieval._state.is_purged("pat-1")
 
 
-async def test_failed_purge_is_recorded_and_blocks_moss_mode(tmp_path):
-    """Durable-by-intent: the pending record survives the failure, ensure_ready
-    refuses to build new PHI indexes, and a later retry clears it."""
+async def test_purged_patient_is_not_rebuilt_by_post_call_projection(tmp_path):
+    """The in-flight-call race: a purge lands mid-call, then this call's
+    post-call pass runs. It must not rewrite the just-deleted index."""
+    created: list[str] = []
+
+    class _Client(_ScriptedMoss):
+        async def create_index(self, name, docs, model_id=None, **kwargs):
+            created.append(name)
+            return None
+
+        async def add_docs(self, name, docs, options=None):
+            created.append(name)
+            return None
+
+    retrieval = _retrieval(tmp_path, _Client())
+    await retrieval.purge_patient()
+    await retrieval.project_memories([{"id": "m1", "text": "a memory", "metadata": {}}])
+
+    assert created == [], f"purged patient's index was rewritten: {created}"
+
+
+async def test_failed_purge_is_retried_and_blocks_moss_mode(tmp_path):
+    """Durable-by-intent: an incomplete purge blocks moss mode and is retried."""
     client = _ScriptedMoss(fail_deletes=True)
     retrieval = _retrieval(tmp_path, client)
 
     ok = await retrieval.purge_patient()
     assert ok is False
-    assert retrieval._state.purge_pending("pat-1")
+    assert retrieval._state.purge_incomplete("pat-1")
 
     # ensure_ready must refuse moss mode while the purge is owed...
     assert await retrieval.ensure_ready() is False
 
-    # ...and a later successful retry clears the ledger.
+    # ...and the retry (driven from ensure_ready) completes it.
     client.fail_deletes = False
-    ok = await retrieval.purge_patient()
-    assert ok is True
-    assert not retrieval._state.purge_pending("pat-1")
+    assert await retrieval.ensure_ready() is False  # still refuses: tombstoned
+    assert not retrieval._state.purge_incomplete("pat-1")
+    assert client.deleted  # the retry actually ran
+
+
+def test_failed_deletion_is_never_reported_as_success():
+    """C3: a bare '404' substring match turned a FAILED deletion into a
+    reported success — and index names embed a patient UUID, ~0.8% of which
+    contain the hex triple 404."""
+    from juniper_voice.retrieval import _is_not_found
+
+    assert _is_not_found(RuntimeError("index not found")) is True
+    assert _is_not_found(RuntimeError("Index does not exist")) is True
+    # Must NOT be treated as "already absent":
+    assert _is_not_found(RuntimeError("upstream 5404 gateway timeout")) is False
+    assert (
+        _is_not_found(RuntimeError("write to 'juniper-chart-0a5f-404b-4d1a' failed")) is False
+    )
 
 
 async def test_first_call_builds_in_background_and_falls_back(tmp_path):

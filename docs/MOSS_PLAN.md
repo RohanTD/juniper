@@ -1,6 +1,11 @@
 # Moss integration — restructuring the context architecture
 
-**Status: implemented 2026-08-01** (`retrieval.py` and the moss-mode wiring across the
+**Status: implemented 2026-08-01; adversarially reviewed and hardened.** Ships to
+**Phase A (shadow) only** — `JUNIPER_CONTEXT_MODE=shadow` runs and measures retrieval
+without it reaching any prompt. See "Adversarial review outcomes" at the end for what
+was fixed and what remains open before Phase B.
+
+**Original status line:** (`retrieval.py` and the moss-mode wiring across the
 voice service; 98 tests green, brief mode remains the configured default per Phase B).
 This extends `docs/PLAN.md` (the design authority); nothing here overrides a locked
 decision, and one section below deliberately pushes back on part of the original ask.
@@ -428,3 +433,58 @@ concurrent calls on one host, now that two durable indexes stay loaded per activ
 whether chart facts want a keyword-side boost for drug names (hybrid alpha tuning); and
 whether `auto_refresh` polling is worth its overhead given that delta reconciliation already
 runs pre-call.
+
+
+---
+
+# Adversarial review outcomes (2026-08-01)
+
+An adversarial pass attacked the implementation with 26 reproducing probes. Findings and
+disposition:
+
+## Fixed
+
+| # | Defect | Fix |
+|---|---|---|
+| C1 | Retrieved patient-authored text could reproduce the literal `Turn instruction (from the care system…)` label and land *above* the genuine one — and the 4M/Closer probe paths had **no** framing at all, while their output sets coverage state (a forged "all domains documented" makes the note read complete because a gap vanished) | `retrieval.neutralize()` quotes every retrieved line and breaks forgeable labels; retrieved text moved to its **own message** so it can never precede the instruction; probe blocks now carry explicit UNTRUSTED framing |
+| C2 | Purge cleared its own ledger on success, so an honoured deletion was undone by the in-flight call's post-call projection or the next call's hydration | Purge writes a **tombstone** that survives success; `ensure_ready`, `_build_chart_index`, `_rebuild_chart` and `project_memories` all refuse; only explicit re-enrollment (`clear_purge`) removes it |
+| C3 | `_is_not_found` matched the bare substring `"404"`, so an unrelated error (or a patient UUID containing hex `404`) reported a **failed** deletion as success and cleared the retry | Conservative phrase/status matching; anything ambiguous counts as failure (a redundant retry is free, a lost deletion is a breach) |
+| H1 | `moss_retrieval` was absent from `CRITICAL_STAGES`, so 700ms of per-turn retrieval passed the 800ms budget | Added — the budget now measures the thing it exists to protect |
+| H2 | Barge-in *during retrieval* orphaned the urgency LLM call (moss-mode-only regression; brief mode has no await there) | `try/finally` now wraps the retrieval await too |
+| H3 | The chart index inherited the brief's recency caps — 60 documents for a 400-observation patient, i.e. **less** history than the brief it replaces, gutting the integration's headline justification | `fetch_chart_snapshot(depth="index")` lifts the caps and drops the active-only medication filter (superseded drugs stay findable, carrying `status` in metadata) |
+| H4 | `compile_core_header` pooled medications with no status filter, so a discontinued drug appeared under the literal heading **"Active medications"** — a false clinical fact in the one context that is never retrieval-gated | Status filter |
+| H5 | Two full broad FHIR reads per call | The index read is now a server-side delta (`_lastUpdated=gt{watermark}`), near-empty on a steady chart |
+| H6 | A persistently failing rebuild deleted the chart index on *every* subsequent call (threshold never reset, delete-before-create) — a permanent silent outage plus a delete storm | Counter resets before the attempt; `create_index` replaces in place, no delete |
+| M3 | The purge endpoint was unauthenticated whenever `JUNIPER_API_TOKEN` was unset | Fails closed with 503 |
+| M4 | `RetrievedContext.degraded` was computed and never read | `LatencyLog.record_degradation()`; partial and total failures are both logged |
+| M5 | Chart document ids fell back to `hash(text)`, which is per-process randomised — silently duplicating documents on every restart | Content hash (sha1) |
+| M6 | `top_k` and `alpha` existed but were never read from the environment, making Phase A's stated tuning gates unrunnable | Wired through `from_env` |
+| D1 | Moss mode set `digest=""`, so a degraded turn lost the relationship context entirely — not "slightly thinner", a total loss of the product's stated primary value | The digest stays **pinned**; retrieval adds verbatim recall on top of it |
+| — | **No shadow mode existed**, so Phase A ("logging only") was unimplementable: enabling moss mode with real patients *was* Phase B | `JUNIPER_CONTEXT_MODE=shadow` — retrieval runs, is measured and logged, and reaches no prompt |
+
+## Open before Phase B (accepted, tracked)
+
+- **H7 / state store concurrency.** `RetrievalStateStore` is a JSON file with a
+  per-instance lock; two workers can lose a tombstone write, and a corrupt read returns
+  `{}` silently. Should become SQLite (WAL gives cross-process atomicity free). *Mitigated
+  meanwhile:* the tombstone is written before deletion and re-checked by every write path.
+- **M1 / abandoned worker threads.** The SDK is `asyncio.to_thread` over a blocking Rust
+  core; the controller deadline bounds the coroutine, not the thread. Under sustained
+  slowness the default executor can saturate. Needs a bounded, dedicated executor.
+- **D3 / per-call `MossClient`.** Two concurrent calls for one patient hold two full index
+  copies and `auto_refresh` is never enabled. Needs a process-level client with refcounted
+  index loads.
+- **D4 / memories re-projection.** `chunk_transcript` runs only on the just-ended call, so
+  after a purge or index loss prior-call chunks are gone permanently — the
+  derivable-projection property holds for the chart but not for memories. Needs a
+  re-projection entry point reading transcripts back from Medplum.
+- **D5 / topic-chasing.** Up to 10 documents injected every turn, no score threshold, no
+  dedup against the window. The plausible dominant Phase A quality finding, and the
+  current gates (latency, hit-rate) all reward *more* retrieval. Phase A must add a
+  qualitative measure before Phase B.
+- **D6 / unbounded memories growth**, re-embedded in full every call; no recency decay.
+- **D7 / 4M advisor grounding.** In moss mode it sees the core header instead of the full
+  brief. Probes partly compensate; worth measuring.
+- **D8 / no shutdown drain** for `post_call_tasks`.
+- **M7 / patient id in index names**, and the SDK's undisclosed telemetry
+  (`MOSS_DISABLE_TELEMETRY`) — both belong in the BAA diligence list.

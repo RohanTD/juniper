@@ -23,7 +23,11 @@ logger = logging.getLogger("juniper.latency")
 Clock = Callable[[], float]
 
 # The four stages that make up end-of-speech -> first-audio.
-CRITICAL_STAGES = ("stt_finalize", "companion", "compassion", "first_byte")
+# Every stage that sits between end-of-speech and first audio. moss_retrieval
+# belongs here: it runs ahead of the Companion on the turn's critical path, so
+# omitting it would let per-turn retrieval grow without ever tripping the CI
+# budget — the budget would silently stop measuring the thing it exists for.
+CRITICAL_STAGES = ("stt_finalize", "moss_retrieval", "companion", "compassion", "first_byte")
 
 DEFAULT_BUDGET_SECONDS = 0.8
 
@@ -85,6 +89,7 @@ class LatencyLog:
         self.call_id = call_id
         self.records: list[TurnRecord] = []
         self.slow_loop: list[SlowLoopRecord] = []
+        self.degradations: list[tuple[int, str]] = []
 
     def begin_turn(self, turn_index: int) -> TurnTimer:
         return TurnTimer(TurnRecord(turn_index=turn_index), self.clock, self)
@@ -109,6 +114,19 @@ class LatencyLog:
         if self.records:
             record = self.records[-1]
             record.stages[name] = record.stages.get(name, 0.0) + duration
+
+    def record_degradation(self, turn_index: int, reason: str) -> None:
+        """A turn that shipped with less context than intended.
+
+        Without this a partially-failed retrieval is indistinguishable from a
+        healthy turn in the logs, so a silently-degrading deployment looks
+        perfect — and MOSS_PLAN's fail-soft verification ("the latency log
+        records the degradation") would be unmeetable."""
+        self.degradations.append((turn_index, reason))
+        logger.warning(
+            "turn_degraded %s",
+            json.dumps({"call_id": self.call_id, "turn": turn_index, "reason": reason}),
+        )
 
     def record_slow_loop(self, turn_index: int, name: str, duration: float) -> None:
         """Slow-loop work is logged separately; it is never part of a turn's

@@ -76,9 +76,8 @@ class RetrievedContext:
         return not (self.chart or self.memories or self.session)
 
     def render(self) -> str:
-        """Labeled context block for the Companion prompt. Retrieved text is
-        reference material — the Companion's prompt says so explicitly, since
-        transcript chunks contain patient-authored language."""
+        """Labeled context block for a prompt. Every document is neutralized
+        first — see ``neutralize``."""
         blocks: list[str] = []
         if self.chart:
             blocks.append("From her chart:")
@@ -92,9 +91,58 @@ class RetrievedContext:
         return "\n".join(blocks)
 
 
+# Structural labels the prompts use to mark authoritative, care-system-authored
+# instructions. Retrieved documents are UNTRUSTED — memories-index documents are
+# chunks of raw patient speech, and chart documents carry clinic-authored free
+# text — so any of these appearing inside retrieved text would let that text
+# impersonate the care system. Neutralized on the way in.
+_FORGEABLE_LABELS = (
+    "turn instruction",
+    "from the care system",
+    "system note",
+    "care team note",
+    "reference context retrieved",
+    "targeted retrieval",
+    "reply with the exact words",
+    "respond with strict json",
+    "urgent —",
+    "override",
+)
+
+
+def neutralize(text: str) -> str:
+    """Defang retrieved text so it cannot forge a care-system instruction.
+
+    The threat is concrete: transcript chunks are patient-authored, and the
+    Companion prompt renders retrieved text immediately above the literal line
+    "Turn instruction (from the care system, not the patient):". A chunk that
+    reproduces that label byte-for-byte lands FIRST and reads as the
+    authoritative instruction. Same for the 4M/Closer probe blocks, whose
+    output drives coverage state rather than prose.
+
+    Every line is quoted (so multi-line documents cannot escape their bullet)
+    and forgeable labels are broken with a zero-visual-width marker that keeps
+    the text readable to the model while destroying the exact match.
+    """
+    lines = []
+    for raw in str(text).splitlines() or [""]:
+        line = raw.strip()
+        lowered = line.lower()
+        for label in _FORGEABLE_LABELS:
+            if label in lowered:
+                # Rebuild case-insensitively, breaking the label token.
+                start = lowered.index(label)
+                broken = line[start] + "​" + line[start + 1 : start + len(label)]
+                line = line[:start] + broken + line[start + len(label) :]
+                lowered = line.lower()
+        lines.append(f"  > {line}")
+    return "\n".join(lines)
+
+
 def _bullet(doc: RetrievedDoc) -> str:
     date = doc.metadata.get("date", "")
-    return f"- ({date}) {doc.text}" if date else f"- {doc.text}"
+    header = f"- ({date})" if date else "-"
+    return f"{header}\n{neutralize(doc.text)}"
 
 
 # ---------------------------------------------------------------------------
@@ -172,43 +220,69 @@ class RetrievalStateStore:
             data.setdefault("call_counts", {})[patient_id] = 0
             self._save(data)
 
-    # -- pending purges ------------------------------------------------------
-    def record_pending_purge(self, patient_id: str) -> None:
-        with self._lock:
-            data = self._load()
-            pending = data.setdefault("pending_purges", [])
-            if patient_id not in pending:
-                pending.append(patient_id)
-            self._save(data)
+    # -- purge tombstones ----------------------------------------------------
+    #
+    # A purge writes a TOMBSTONE, not a transient "pending" flag. The tombstone
+    # persists after a successful deletion and is what stops the deletion being
+    # silently undone: every path that would create, hydrate or write a
+    # patient's indexes checks it first. Only explicit re-enrollment clears it.
+    #
+    # Without this, a honoured deletion survives exactly until the next call —
+    # an in-flight call's post-call projection rewrites the memories index, and
+    # the next call's hydration re-projects the whole chart from Medplum.
 
-    def clear_pending_purge(self, patient_id: str) -> None:
+    def record_purge(self, patient_id: str, *, completed: bool) -> None:
         with self._lock:
             data = self._load()
-            data["pending_purges"] = [
-                p for p in data.get("pending_purges", []) if p != patient_id
-            ]
+            tombstones = data.setdefault("purge_tombstones", {})
+            existing = tombstones.get(patient_id) or {}
+            tombstones[patient_id] = {
+                "requested_at": existing.get("requested_at") or utcnow_iso(),
+                "completed": bool(completed),
+                "completed_at": utcnow_iso() if completed else existing.get("completed_at"),
+            }
             # A purged patient's watermark and counter are stale by definition.
             data.get("watermarks", {}).pop(patient_id, None)
             data.get("call_counts", {}).pop(patient_id, None)
             self._save(data)
 
-    def purge_pending(self, patient_id: str) -> bool:
+    def is_purged(self, patient_id: str) -> bool:
+        """True when a deletion has been requested and not re-enrolled —
+        whether or not it has succeeded yet. Both states must block index use:
+        incomplete means the data is still owed deletion; complete means it
+        must not come back."""
         with self._lock:
-            return patient_id in self._load().get("pending_purges", [])
+            return patient_id in self._load().get("purge_tombstones", {})
 
-    def pending_purges(self) -> tuple[str, ...]:
+    def purge_incomplete(self, patient_id: str) -> bool:
+        """A deletion was requested but has not succeeded — retry it."""
         with self._lock:
-            return tuple(self._load().get("pending_purges", []))
+            record = self._load().get("purge_tombstones", {}).get(patient_id)
+            return bool(record) and not record.get("completed", False)
+
+    def clear_purge(self, patient_id: str) -> None:
+        """Explicit re-enrollment: the patient is being onboarded again and
+        consents anew. The ONLY way a tombstone is removed."""
+        with self._lock:
+            data = self._load()
+            data.get("purge_tombstones", {}).pop(patient_id, None)
+            self._save(data)
+
+    def purge_tombstones(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._load().get("purge_tombstones", {}))
 
 
 # ---------------------------------------------------------------------------
 # The real implementation
 # ---------------------------------------------------------------------------
 
-ChartSupplier = Callable[[], Awaitable[tuple[list[Any], str]]]
-"""Returns (all chart documents, read-start watermark ISO). The watermark is
-captured BEFORE the FHIR read starts — capturing it after would silently lose
-any chart change that lands during the read window, forever."""
+ChartSupplier = Callable[..., Awaitable[tuple[list[Any], str]]]
+"""``supplier(since: str | None) -> (chart documents, read-start watermark)``.
+
+The watermark is captured BEFORE the FHIR read starts — capturing it after
+would silently lose any chart change that lands during the read window,
+forever. ``since`` makes the read itself a server-side delta."""
 
 MemorySupplier = Callable[[], Sequence[Mapping[str, Any]]]
 
@@ -273,6 +347,14 @@ class MossRetrieval:
         self._chart_loaded = False
         self._memories_loaded = False
         self._background: set[asyncio.Task] = set()
+        # Set when a purge happens for this patient — including one raised by
+        # a DIFFERENT request while this call is in flight. Every write path
+        # re-checks the durable tombstone as well, so a purge mid-call cannot
+        # be undone by this call's own post-call projection.
+        self._purged = False
+
+    def _write_blocked(self) -> bool:
+        return self._purged or self._state.is_purged(self.patient_id)
 
     # -- names --------------------------------------------------------------
     @property
@@ -296,12 +378,17 @@ class MossRetrieval:
         also returns False — no new PHI indexes are built for a patient whose
         deletion is owed, and the purge is retried first.
         """
-        if self._state.purge_pending(self.patient_id):
+        if self._state.is_purged(self.patient_id):
+            # A tombstone means this patient's data is deleted or owed
+            # deletion. Never rebuild it — that would silently undo an
+            # honoured deletion request. Retry the deletion if it never
+            # completed, then run this call in brief mode.
             logger.warning(
-                "purge pending for %s — retrying purge and refusing moss mode",
+                "purge tombstone for %s — refusing moss mode (no index rebuild)",
                 self.patient_id,
             )
-            await self.purge_patient()
+            if self._state.purge_incomplete(self.patient_id):
+                await self.purge_patient()
             return False
         try:
             self._chart_loaded = await self._hydrate_chart()
@@ -335,12 +422,15 @@ class MossRetrieval:
             self._spawn(self._build_chart_index(), name="chart_build")
             return False
         # Delta reconciliation: upsert only what changed since the watermark.
+        # `since` is pushed to the FHIR server so the read itself is a delta,
+        # not a full re-scan; the client-side filter below is a belt-and-braces
+        # guard for servers that ignore _lastUpdated.
         try:
-            docs, new_watermark = await self._chart_supplier()
             watermark = self._state.watermark(self.patient_id)
+            docs, new_watermark = await self._chart_supplier(watermark)
             changed = [
                 d for d in docs
-                if watermark is None or (d.last_updated or "") > watermark or not d.last_updated
+                if watermark is None or not d.last_updated or d.last_updated > watermark
             ]
             if changed:
                 await _call(
@@ -357,8 +447,11 @@ class MossRetrieval:
         return True
 
     async def _build_chart_index(self) -> None:
+        if self._write_blocked():
+            logger.warning("purge tombstone for %s — refusing chart build", self.patient_id)
+            return
         try:
-            docs, watermark = await self._chart_supplier()
+            docs, watermark = await self._chart_supplier(None)
             await _call(
                 self._client.create_index,
                 self.chart_index,
@@ -547,6 +640,15 @@ class MossRetrieval:
     async def project_memories(self, docs: Sequence[Mapping[str, Any]]) -> None:
         """Upsert new memories/chunks into the durable memories index (creating
         it on first use), and schedule the periodic full chart rebuild."""
+        if self._write_blocked():
+            # A purge landed (possibly mid-call): writing here would rebuild
+            # the index that was just deleted. The Context Brain store still
+            # holds the memories, so nothing is lost that re-enrollment
+            # could not re-project.
+            logger.warning(
+                "purge tombstone for %s — skipping memories projection", self.patient_id
+            )
+            return
         moss_docs = [
             _document(id=d["id"], text=d["text"], metadata=dict(d.get("metadata", {})))
             for d in docs
@@ -582,12 +684,19 @@ class MossRetrieval:
             await self._rebuild_chart()
 
     async def _rebuild_chart(self) -> None:
+        if self._write_blocked():
+            logger.warning("purge tombstone for %s — refusing chart rebuild", self.patient_id)
+            return
+        # The counter resets FIRST, before the attempt. Resetting only on
+        # success turns a persistently failing rebuild (quota, outage) into a
+        # delete-storm: the threshold stays tripped, so every subsequent call
+        # deletes the index and fails to recreate it — a permanent, silent
+        # brief-mode outage. A missed rebuild cycle is the cheaper failure.
+        self._state.reset_call_count(self.patient_id)
         try:
-            docs, watermark = await self._chart_supplier()
-            try:
-                await _call(self._client.delete_index, self.chart_index)
-            except Exception:  # noqa: BLE001 - absent index is fine
-                pass
+            docs, watermark = await self._chart_supplier(None)
+            # create_index creates OR REPLACES, so no delete is needed — and
+            # deleting first would leave a window (and, on failure, no index).
             await _call(
                 self._client.create_index,
                 self.chart_index,
@@ -595,16 +704,21 @@ class MossRetrieval:
                 self._model_id,
             )
             self._state.set_watermark(self.patient_id, watermark)
-            self._state.reset_call_count(self.patient_id)
             logger.info("chart index %s fully rebuilt (%d docs)", self.chart_index, len(docs))
         except Exception:  # noqa: BLE001
             logger.exception("periodic chart rebuild failed for %s", self.chart_index)
 
     # -- purge ---------------------------------------------------------------
     async def purge_patient(self) -> bool:
-        """Delete both durable indexes. Durable-by-intent: failure records a
-        pending purge that blocks moss mode for this patient and is retried."""
-        self._state.record_pending_purge(self.patient_id)
+        """Delete both durable indexes and tombstone the patient.
+
+        The tombstone is written FIRST and survives success: it is what stops
+        an in-flight call's post-call projection or the next call's hydration
+        from silently rebuilding what was just deleted. Only explicit
+        re-enrollment clears it.
+        """
+        self._state.record_purge(self.patient_id, completed=False)
+        self._purged = True  # stop this instance writing anything further
         ok = True
         for name in (self.chart_index, self.memories_index):
             try:
@@ -614,15 +728,36 @@ class MossRetrieval:
                     continue
                 logger.exception("purge: delete_index(%s) failed", name)
                 ok = False
+        self._state.record_purge(self.patient_id, completed=ok)
         if ok:
-            self._state.clear_pending_purge(self.patient_id)
             logger.info("purged moss indexes for patient %s", self.patient_id)
+        else:
+            logger.error(
+                "purge INCOMPLETE for %s — tombstone retained, will retry", self.patient_id
+            )
         return ok
 
 
+_NOT_FOUND_PHRASES = ("not found", "does not exist", "no such index", "unknown index")
+
+
 def _is_not_found(exc: Exception) -> bool:
+    """Whether a delete failed because the index was already absent.
+
+    Deliberately conservative: this decides whether a purge counts as
+    HONOURED. A bare "404" substring match is unsafe — index names embed a
+    patient id, and unrelated errors ("upstream 5404 gateway timeout") or a
+    UUID containing the hex triple 404 would both match, silently converting a
+    FAILED deletion into a reported success and clearing the retry ledger.
+    Only phrases that unambiguously mean "absent" count; anything else is a
+    failure, which is the safe direction (a redundant retry costs nothing;
+    a lost deletion is a compliance breach).
+    """
     text = str(exc).lower()
-    return "not found" in text or "does not exist" in text or "404" in text
+    if any(phrase in text for phrase in _NOT_FOUND_PHRASES):
+        return True
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    return status == 404
 
 
 # ---------------------------------------------------------------------------

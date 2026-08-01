@@ -39,9 +39,12 @@ class Settings:
     organization_ref: str | None = "Organization/UNSET-run-medplum-scripts-apply.sh"
     # Budgets
     ehr_brief_token_budget: int = 2500
-    # Context mode (docs/MOSS_PLAN.md): "brief" = compiled EHR brief + digest
-    # (the tested fallback); "moss" = semantic retrieval with the pinned core
-    # header. Brief stays the default until the Phase E flip.
+    # Context mode (docs/MOSS_PLAN.md):
+    #   "brief"  = compiled EHR brief + digest (the tested fallback, default)
+    #   "shadow" = retrieval runs, is measured and logged, and reaches NO
+    #              prompt; prompts stay byte-identical to brief mode. This is
+    #              what Phase A ("logging only") requires.
+    #   "moss"   = retrieval injected, pinned core header replaces the bulk brief.
     context_mode: str = "brief"
     moss_project_id: str | None = None
     moss_project_key: str | None = None
@@ -96,6 +99,16 @@ class Settings:
             ),
             moss_full_rebuild_every=int(
                 env.get("JUNIPER_MOSS_FULL_REBUILD_EVERY", default.moss_full_rebuild_every)
+            ),
+            # Phase A gates are literally "alpha tuning" and "top_k" — they
+            # must be runnable without a code edit and redeploy.
+            moss_alpha=float(env.get("JUNIPER_MOSS_ALPHA", default.moss_alpha)),
+            moss_top_k_chart=int(env.get("JUNIPER_MOSS_TOP_K_CHART", default.moss_top_k_chart)),
+            moss_top_k_memories=int(
+                env.get("JUNIPER_MOSS_TOP_K_MEMORIES", default.moss_top_k_memories)
+            ),
+            moss_top_k_session=int(
+                env.get("JUNIPER_MOSS_TOP_K_SESSION", default.moss_top_k_session)
             ),
             retrieval_state_path=env.get(
                 "JUNIPER_RETRIEVAL_STATE_PATH", default.retrieval_state_path

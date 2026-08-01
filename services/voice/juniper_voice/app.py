@@ -163,15 +163,25 @@ def create_app(
         defensible with a working deletion path. Durable-by-intent: a failed
         deletion is recorded and retried before the patient's indexes are ever
         touched again, and the pending record itself blocks moss mode."""
+        # Fail CLOSED: this deletes PHI indexes keyed only on a path
+        # parameter. require_bearer is a no-op when no token is configured
+        # (fine for a local dev preferences read; not for this).
+        if not settings.api_token:
+            raise HTTPException(
+                status_code=503,
+                detail="JUNIPER_API_TOKEN must be configured to use the purge endpoint",
+            )
         require_bearer(request, settings.api_token)
-        if settings.context_mode != "moss" or not (
+        if settings.context_mode not in ("moss", "shadow") or not (
             settings.moss_project_id and settings.moss_project_key
         ):
             # No durable indexes can exist without moss mode ever having run;
             # still record the intent so a later moss enablement honours it.
             from .retrieval import RetrievalStateStore
 
-            RetrievalStateStore(settings.retrieval_state_path).record_pending_purge(patient_id)
+            RetrievalStateStore(settings.retrieval_state_path).record_purge(
+                patient_id, completed=False
+            )
             return JSONResponse({"purged": False, "pending": True, "reason": "moss not active"})
         retrieval = _make_retrieval(call_id=f"purge-{patient_id}", patient_id=patient_id)
         if retrieval is None:
@@ -183,16 +193,28 @@ def create_app(
     def _make_retrieval(call_id: str, patient_id: str):
         """Build the per-call MossRetrieval, or None when moss mode is off or
         unconfigured. Import is local so brief mode never touches the SDK."""
-        if settings.context_mode != "moss":
+        if settings.context_mode not in ("moss", "shadow"):
             return None
         if not (settings.moss_project_id and settings.moss_project_key):
-            logger.error("JUNIPER_CONTEXT_MODE=moss but MOSS_PROJECT_ID/KEY unset; brief mode")
+            logger.error(
+                "JUNIPER_CONTEXT_MODE=%s but MOSS_PROJECT_ID/KEY unset; brief mode",
+                settings.context_mode,
+            )
             return None
         from .medplum import extract_chart_documents, fetch_chart_snapshot
         from .retrieval import MossRetrieval, RetrievalStateStore
 
-        async def chart_supplier():
-            snapshot = await fetch_chart_snapshot(medplum, patient_id, terminology)
+        state = RetrievalStateStore(settings.retrieval_state_path)
+
+        async def chart_supplier(since: str | None = None):
+            # depth="index": the retrieval index has no token budget, so it
+            # must NOT inherit the brief's recency caps — otherwise it carries
+            # less history than the brief it replaces. `since` pushes the
+            # delta server-side so the reconciliation read is near-empty on a
+            # steady chart rather than a second full scan.
+            snapshot = await fetch_chart_snapshot(
+                medplum, patient_id, terminology, depth="index", since=since
+            )
             return extract_chart_documents(snapshot), snapshot.read_started_at
 
         return MossRetrieval(
@@ -202,7 +224,7 @@ def create_app(
             call_id=call_id,
             chart_supplier=chart_supplier,
             memory_supplier=lambda: context_brain.memory_documents(patient_id),
-            state=RetrievalStateStore(settings.retrieval_state_path),
+            state=state,
             model_id=settings.moss_model,
             index_prefix=settings.moss_index_prefix,
             query_timeout=settings.moss_query_timeout,
@@ -230,6 +252,7 @@ def create_app(
         )
         brief = patient_context.brief
 
+        shadow = settings.context_mode == "shadow"
         retrieval = _make_retrieval(call_id, patient_id)
         core_header: str | None = None
         if retrieval is not None:
@@ -248,14 +271,19 @@ def create_app(
             roster=settings.roster,
             terminology=terminology,
             brief=brief,
-            # In moss mode past-call memories arrive by retrieval; the digest
-            # would duplicate them in every prompt.
-            digest=context_brain.digest(patient_id) if retrieval is None else "",
+            # The digest stays PINNED even in moss mode. Memories are not in
+            # the core header, so dropping it meant a degraded turn lost the
+            # relationship context entirely ("granddaughter Maya started
+            # college") — not "a slightly thinner version of today", but a
+            # total loss of the thing the product exists for. Retrieval adds
+            # verbatim recall on top of it; it does not replace it.
+            digest=context_brain.digest(patient_id),
             negative_constraints=context_brain.negative_constraints(patient_id),
             preferences=preferences,
             escalation=EscalationSink(notifier=escalation_notifier),
             retrieval=retrieval,
             core_header=core_header,
+            shadow_retrieval=shadow,
         )
         registry.register(call_id, controller)
         return controller

@@ -16,6 +16,7 @@ the terminology package).
 from __future__ import annotations
 
 import base64
+import hashlib
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -329,36 +330,58 @@ async def fetch_chart_snapshot(
     *,
     today_iso: str | None = None,
     now_iso: str | None = None,
+    depth: str = "brief",
+    since: str | None = None,
 ) -> ChartSnapshot:
+    """One broad chart read.
+
+    ``depth="brief"`` applies the recency caps the compiled brief needs — it
+    has a token budget, so an unbounded read would only be trimmed later.
+
+    ``depth="index"`` lifts them. The retrieval index has no token ceiling, and
+    "the whole chart is indexed, twenty years of history stops being a
+    liability" is the entire justification for the integration — inheriting the
+    brief's caps would silently make the index carry LESS than the brief
+    (60 documents for a 400-observation patient), which is the opposite of the
+    claim. Historical medications are included too: at index depth the status
+    filter is dropped so superseded drugs remain findable, carrying their
+    status in metadata rather than being invisible.
+    """
     from datetime import datetime, timezone
 
     read_started_at = now_iso or datetime.now(timezone.utc).isoformat()
     patient_ref = f"Patient/{patient_id}"
+    wide = depth == "index"
+
+    def params(brief_count: str, **extra: str) -> dict[str, str]:
+        out: dict[str, str] = {"patient": patient_ref}
+        # Still bounded at index depth — a page cap, not a recency filter.
+        out["_count"] = "1000" if wide else brief_count
+        if since:
+            # Server-side delta: only resources touched since the watermark
+            # come back, so the reconciliation read is near-empty on a steady
+            # chart rather than a second full scan of the record.
+            out["_lastUpdated"] = f"gt{since}"
+        out.update(extra)
+        return out
 
     patient = await store.read("Patient", patient_id)
 
-    # Recency-filter aggressively: bounded counts, most-recent-first sorts.
-    conditions = await store.search("Condition", {"patient": patient_ref, "_count": "25"})
-    med_statements = await store.search(
-        "MedicationStatement", {"patient": patient_ref, "_count": "25"}
-    )
+    conditions = await store.search("Condition", params("25"))
+    med_statements = await store.search("MedicationStatement", params("25"))
     med_requests = await store.search(
-        "MedicationRequest", {"patient": patient_ref, "_count": "25", "status": "active"}
+        "MedicationRequest", params("25") if wide else params("25", status="active")
     )
-    allergies = await store.search("AllergyIntolerance", {"patient": patient_ref})
-    observations = await store.search(
-        "Observation", {"patient": patient_ref, "_sort": "-date", "_count": "30"}
-    )
-    encounters = await store.search(
-        "Encounter", {"patient": patient_ref, "_sort": "-date", "_count": "10"}
-    )
-    appointment_params = {"patient": patient_ref, "_count": "10"}
+    allergies = await store.search("AllergyIntolerance", params("100"))
+    observations = await store.search("Observation", params("30", _sort="-date"))
+    encounters = await store.search("Encounter", params("10", _sort="-date"))
+    appointment_params = params("10")
     if today_iso:
         appointment_params["date"] = f"ge{today_iso}"
     appointments = await store.search("Appointment", appointment_params)
-    care_plans = await store.search("CarePlan", {"patient": patient_ref, "_count": "10"})
-    goals = await store.search("Goal", {"patient": patient_ref, "_count": "10"})
-    care_teams = await store.search("CareTeam", {"patient": patient_ref})
+    care_plans = await store.search("CarePlan", params("10"))
+    goals = await store.search("Goal", params("10"))
+    care_teams = await store.search("CareTeam", params("20"))
     prior_notes = await store.search(
         "DocumentReference",
         {
@@ -632,7 +655,12 @@ class ChartDocument:
 
 def _doc(resource: Mapping[str, Any], domain: str, text: str, **extra: str) -> ChartDocument:
     rtype = str(resource.get("resourceType", "resource")).lower()
-    rid = str(resource.get("id") or abs(hash(text)))
+    # Content hash, not hash(): str.__hash__ is randomised per interpreter
+    # (PYTHONHASHSEED), so a resource without an id would get a different
+    # document id in every worker process. Since the delta path only upserts
+    # and never deletes, that silently duplicates the document on each
+    # restart — and would defeat the derivable-projection property.
+    rid = str(resource.get("id") or hashlib.sha1(text.encode("utf-8")).hexdigest()[:16])
     metadata = {"domain": domain, **{k: v for k, v in extra.items() if v}}
     return ChartDocument(
         id=f"{rtype}-{rid}",
@@ -740,9 +768,17 @@ def compile_core_header(brief: EHRBrief, snapshot: ChartSnapshot) -> str:
     else:
         lines.append("- none recorded")
 
+    # Status filter is load-bearing, not hygiene: this block is headed
+    # "Active medications" and is the ONE medication surface the plan says
+    # must be unconditionally reliable. Pooling every MedicationStatement
+    # regardless of status presents a discontinued drug as current — a false
+    # clinical fact in the one place that is never retrieval-gated.
+    inactive = {"stopped", "completed", "entered-in-error", "cancelled", "not-taken", "on-hold"}
     seen: set[str] = set()
     med_names: list[str] = []
     for resource in list(snapshot.med_statements) + list(snapshot.med_requests):
+        if str(resource.get("status") or "").lower() in inactive:
+            continue
         display = _medication_display(resource)
         if display and display not in seen:
             seen.add(display)
