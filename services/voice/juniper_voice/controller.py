@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Mapping, Sequence
@@ -158,6 +159,14 @@ class ConversationController:
         self.unanswered_asks: list[UnansweredAsk] = []
 
         self._call_started_at = clock()
+        # A real wall-clock timestamp, independent of `clock` — `clock`
+        # defaults to time.monotonic() (correct for elapsed-time math: turn
+        # budgets, latency), which counts from an arbitrary reference point,
+        # not the epoch. Feeding it into datetime.fromtimestamp() for the
+        # FHIR Encounter/DocumentReference period produces a bogus date near
+        # 1970 (caught live: a real call's note landed with
+        # period.start == "1970-02-05...").
+        self._call_started_at_wall = datetime.now(timezone.utc)
         self._turn_index = 0
         self._gatekeeper_attempts = 0
         self._closing_turns_used = 0
@@ -703,6 +712,10 @@ class ConversationController:
     @property
     def call_started_at(self) -> float:
         return self._call_started_at
+
+    @property
+    def call_started_at_wall(self) -> datetime:
+        return self._call_started_at_wall
 
 
 def _cancel_pending(*tasks: asyncio.Task) -> None:

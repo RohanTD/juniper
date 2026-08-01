@@ -149,10 +149,6 @@ async def generate_family_summary(
     return response.text.strip()
 
 
-def _iso(timestamp: float) -> str:
-    return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
-
-
 async def run_post_call(
     *,
     controller: ConversationController,
@@ -201,8 +197,11 @@ async def run_post_call(
         tasks = controller.escalation.build_tasks(
             terminology=terminology, device_ref=device_ref, owner_ref=owner_ref
         )
-        start_iso = call_start_iso or _iso(controller.call_started_at)
-        end_iso = call_end_iso or _iso(controller.clock())
+        # controller.call_started_at (monotonic, for elapsed-time math) is
+        # NOT a wall-clock timestamp — feeding it through _iso() produces a
+        # bogus date near 1970. call_started_at_wall is the real one.
+        start_iso = call_start_iso or controller.call_started_at_wall.isoformat()
+        end_iso = call_end_iso or datetime.now(timezone.utc).isoformat()
         write_result = await write_post_call(
             medplum,
             terminology,
@@ -235,12 +234,15 @@ async def run_post_call(
     retrieval = getattr(controller, "retrieval", None)
     if retrieval is not None and context_brain is not None:
         try:
+            # Chunk dates use wall-clock time — controller.clock() is
+            # monotonic (elapsed-time math only) and renders as 1970.
+            chunk_date = (call_end_iso or datetime.now(timezone.utc).isoformat())[:10]
             docs = list(context_brain.memory_documents(controller.patient_id))
             docs.extend(
                 chunk_transcript(
                     transcript_text,
                     controller.call_id,
-                    call_date=(call_end_iso or _iso(controller.clock()))[:10],
+                    call_date=chunk_date,
                 )
             )
             await retrieval.project_memories(docs)

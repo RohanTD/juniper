@@ -30,3 +30,4 @@ npm-debug.log*
 # App-level stores and scratch output
 *.local.json
 scratch/
+services/voice/data/

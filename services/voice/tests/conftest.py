@@ -131,14 +131,43 @@ class FakeMedplum:
         self.writes.append(("create", stored))
         return stored
 
-    async def upsert(self, resource: Mapping[str, Any]) -> dict[str, Any]:
-        stored = dict(resource)
-        assert stored.get("id"), "upsert requires a client-assigned id"
-        bucket = self.resources.setdefault(stored["resourceType"], [])
-        bucket[:] = [r for r in bucket if r.get("id") != stored["id"]]
-        bucket.append(stored)
-        self.writes.append(("upsert", stored))
-        return stored
+    async def transaction(self, bundle: Mapping[str, Any]) -> dict[str, Any]:
+        """Mirrors real Medplum: assign every entry a real id up front, then
+        substitute urn:uuid fullUrls for their resolved "Type/id" reference
+        anywhere they appear — including inside plain strings like
+        Attachment.url, which Medplum resolves too even though it isn't a
+        typed Reference field (verified against a live project)."""
+        entries = list(bundle.get("entry", []))
+        id_map: dict[str, str] = {}
+        for entry in entries:
+            resource = entry["resource"]
+            self._counter += 1
+            bare_id = f"{resource['resourceType'].lower()}-{self._counter}"
+            id_map[entry["fullUrl"]] = f"{resource['resourceType']}/{bare_id}"
+
+        def resolve(value: Any) -> Any:
+            if isinstance(value, str):
+                return id_map.get(value, value)
+            if isinstance(value, dict):
+                return {k: resolve(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [resolve(v) for v in value]
+            return value
+
+        response_entries = []
+        for entry in entries:
+            resource = resolve(dict(entry["resource"]))
+            resource_type, bare_id = id_map[entry["fullUrl"]].split("/", 1)
+            resource["id"] = bare_id
+            self.resources.setdefault(resource_type, []).append(resource)
+            self.writes.append(("create", resource))
+            response_entries.append({"resource": resource, "response": {"status": "201"}})
+
+        return {
+            "resourceType": "Bundle",
+            "type": "transaction-response",
+            "entry": response_entries,
+        }
 
     async def read(self, resource_type: str, resource_id: str) -> dict[str, Any]:
         for resource in self.resources.get(resource_type, []):

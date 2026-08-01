@@ -40,7 +40,7 @@ class FHIRStore(Protocol):
 
     async def search(self, resource_type: str, params: Mapping[str, str]) -> list[dict[str, Any]]: ...
     async def create(self, resource: Mapping[str, Any]) -> dict[str, Any]: ...
-    async def upsert(self, resource: Mapping[str, Any]) -> dict[str, Any]: ...
+    async def transaction(self, bundle: Mapping[str, Any]) -> dict[str, Any]: ...
     async def read(self, resource_type: str, resource_id: str) -> dict[str, Any]: ...
 
 
@@ -87,9 +87,10 @@ class MedplumClient:
         headers = kwargs.pop("headers", {})
         headers["Authorization"] = f"Bearer {token}"
         headers.setdefault("Content-Type", "application/fhir+json")
-        response = await self._http.request(
-            method, f"{self._base}/fhir/R4/{path}", headers=headers, **kwargs
-        )
+        # rstrip: a transaction Bundle posts to the bare .../fhir/R4 root
+        # (path=""), which must not carry a trailing slash.
+        url = f"{self._base}/fhir/R4/{path}".rstrip("/")
+        response = await self._http.request(method, url, headers=headers, **kwargs)
         if response.status_code >= 400:
             raise MedplumError(
                 f"{method} {path} failed: {response.status_code} {response.text}"
@@ -109,11 +110,19 @@ class MedplumClient:
         response = await self._request("POST", resource["resourceType"], json=dict(resource))
         return response.json()
 
-    async def upsert(self, resource: Mapping[str, Any]) -> dict[str, Any]:
-        """PUT with a client-assigned id (Medplum update-as-create)."""
-        response = await self._request(
-            "PUT", f"{resource['resourceType']}/{resource['id']}", json=dict(resource)
-        )
+    async def transaction(self, bundle: Mapping[str, Any]) -> dict[str, Any]:
+        """Submit a FHIR transaction Bundle.
+
+        Hosted Medplum does NOT support PUT-to-create with a client-assigned
+        id ("update-as-create") — verified live: PUT to a brand-new,
+        never-used id 404s. A transaction Bundle with urn:uuid fullUrls is
+        the actual supported way to pre-wire circular references (e.g. a
+        Binary's securityContext pointing at its not-yet-created owning
+        DocumentReference): Medplum resolves urn:uuid refs atomically,
+        including inside Attachment.url even though that field is a plain
+        string rather than a typed Reference (confirmed live).
+        """
+        response = await self._request("POST", "", json=dict(bundle))
         return response.json()
 
     async def read(self, resource_type: str, resource_id: str) -> dict[str, Any]:
@@ -762,8 +771,13 @@ class PostCallWriteResult:
     task_ids: tuple[str, ...]
 
 
-def _binary_resource(text: str, content_type: str, owner_doc_id: str) -> dict[str, Any]:
+def _binary_resource(text: str, content_type: str, owner_doc_ref: str) -> dict[str, Any]:
     """A Binary always carries securityContext -> its owning DocumentReference.
+
+    ``owner_doc_ref`` is a full reference string ("DocumentReference/<id>" or
+    a "urn:uuid:..." placeholder resolved within the same transaction Bundle)
+    rather than a bare id, since the owning DocumentReference is written in
+    the same atomic transaction and may not have a real id yet.
 
     Medplum cannot scope Binary reads by criteria in an AccessPolicy — Binary
     access is governed by securityContext inheritance plus presigned attachment
@@ -776,7 +790,7 @@ def _binary_resource(text: str, content_type: str, owner_doc_id: str) -> dict[st
     return {
         "resourceType": "Binary",
         "contentType": content_type,
-        "securityContext": {"reference": f"DocumentReference/{owner_doc_id}"},
+        "securityContext": {"reference": owner_doc_ref},
         "data": base64.b64encode(text.encode("utf-8")).decode("ascii"),
     }
 
@@ -786,17 +800,21 @@ def _document_reference(
     terminology: Terminology,
     category_key: str,
     patient_id: str,
-    encounter_id: str,
-    binary_id: str,
+    encounter_ref: str,
+    binary_ref: str,
     title: str,
     date_iso: str,
     period_start: str,
     period_end: str,
     device_ref: str,
     organization_ref: str | None,
-    relates_to_id: str | None = None,
+    relates_to_ref: str | None = None,
 ) -> dict[str, Any]:
     """docs/PLAN.md FHIR write contract, verbatim shape.
+
+    ``encounter_ref``/``binary_ref``/``relates_to_ref`` are full reference
+    strings (real "Type/id" or "urn:uuid:..." placeholders resolved within
+    the same transaction Bundle) rather than bare ids.
 
     author is a Device, never a Practitioner — AI-generated text must not be
     attributed to a human clinician.  docStatus sits at 'preliminary';
@@ -812,14 +830,14 @@ def _document_reference(
         "date": date_iso,
         "author": [{"reference": device_ref}],
         "context": {
-            "encounter": [{"reference": f"Encounter/{encounter_id}"}],
+            "encounter": [{"reference": encounter_ref}],
             "period": {"start": period_start, "end": period_end},
         },
         "content": [
             {
                 "attachment": {
                     "contentType": terminology.document_content_type,
-                    "url": f"Binary/{binary_id}",
+                    "url": binary_ref,
                     "title": title,
                 }
             }
@@ -827,13 +845,13 @@ def _document_reference(
     }
     if organization_ref:
         resource["custodian"] = {"reference": organization_ref}
-    if relates_to_id:
+    if relates_to_ref:
         # The note/family summary is derived from the raw conversation;
         # relatesTo(transforms) is what keeps every clinical claim auditable.
         resource["relatesTo"] = [
             {
                 "code": terminology.relates_to_transcript_code,
-                "target": {"reference": f"DocumentReference/{relates_to_id}"},
+                "target": {"reference": relates_to_ref},
             }
         ]
     return resource
@@ -854,24 +872,45 @@ async def write_post_call(
     escalation_tasks: Iterable[Mapping[str, Any]] = (),
     date_label: str | None = None,
 ) -> PostCallWriteResult:
-    """Perform the contracted write sequence.
+    """Perform the contracted write sequence as a single FHIR transaction.
 
     Order (docs/PLAN.md): Encounter (the anchor) -> Binary+DocumentReference
     for the clinical note -> the pair for the raw transcript -> the pair for
-    the family summary (only when generated) -> escalation Tasks.
+    the family summary (only when generated), all in one transaction Bundle
+    -> escalation Tasks, written afterward once the real Encounter id exists.
 
-    All three DocumentReference ids are client-assigned (uuid) and written via
-    PUT update-as-create, for two reasons:
-    - every Binary must carry securityContext -> its owning DocumentReference
-      (see _binary_resource), and the Binary is written before its owner;
-    - the note's relatesTo must point at the transcript's DocumentReference,
-      which the contract orders *after* the note.
-    Pre-allocating the ids lets every create carry its full contracted shape
-    with no later amend, while preserving the contracted write order.
+    Every cross-reference (Binary.securityContext -> its owning
+    DocumentReference, DocumentReference.content.attachment.url -> its
+    Binary, relatesTo -> the transcript) is a "urn:uuid:..." placeholder that
+    Medplum resolves atomically within the transaction. A prior version
+    pre-allocated client-assigned ids and wrote each resource with PUT
+    ("update-as-create") — hosted Medplum does not support that (verified
+    live: PUT-to-create on a brand-new id 404s), so every post-call write was
+    silently failing regardless of how the call itself went.
     """
     date_label = date_label or call_end_iso[:10]
 
-    encounter = await store.create(
+    encounter_ref = f"urn:uuid:{uuid.uuid4()}"
+    note_binary_ref = f"urn:uuid:{uuid.uuid4()}"
+    note_doc_ref = f"urn:uuid:{uuid.uuid4()}"
+    transcript_binary_ref = f"urn:uuid:{uuid.uuid4()}"
+    transcript_doc_ref = f"urn:uuid:{uuid.uuid4()}"
+    family_binary_ref = f"urn:uuid:{uuid.uuid4()}"
+    family_doc_ref = f"urn:uuid:{uuid.uuid4()}"
+
+    entries: list[dict[str, Any]] = []
+
+    def add(full_url: str, resource: dict[str, Any]) -> None:
+        entries.append(
+            {
+                "fullUrl": full_url,
+                "resource": resource,
+                "request": {"method": "POST", "url": resource["resourceType"]},
+            }
+        )
+
+    add(
+        encounter_ref,
         {
             "resourceType": "Encounter",
             "status": "finished",
@@ -879,79 +918,99 @@ async def write_post_call(
             "subject": {"reference": f"Patient/{patient_id}"},
             "period": {"start": call_start_iso, "end": call_end_iso},
             "reasonCode": [terminology.encounter_reason("fourMCheckIn").as_codeable_concept()],
-        }
+        },
     )
-    encounter_id = encounter["id"]
 
-    note_doc_id = str(uuid.uuid4())
-    transcript_doc_id = str(uuid.uuid4())
-    family_doc_id_alloc = str(uuid.uuid4())
-
-    note_binary = await store.create(
-        _binary_resource(note_text, terminology.document_content_type, note_doc_id)
+    add(
+        note_binary_ref,
+        _binary_resource(note_text, terminology.document_content_type, note_doc_ref),
     )
-    note_resource = _document_reference(
-        terminology=terminology,
-        category_key="note",
-        patient_id=patient_id,
-        encounter_id=encounter_id,
-        binary_id=note_binary["id"],
-        title=f"Juniper 4M check-in — {date_label}",
-        date_iso=call_end_iso,
-        period_start=call_start_iso,
-        period_end=call_end_iso,
-        device_ref=device_ref,
-        organization_ref=organization_ref,
-        relates_to_id=transcript_doc_id,
-    )
-    note_resource["id"] = note_doc_id
-    note_doc = await store.upsert(note_resource)
-
-    transcript_binary = await store.create(
-        _binary_resource(transcript_text, terminology.document_content_type, transcript_doc_id)
-    )
-    transcript_resource = _document_reference(
-        terminology=terminology,
-        category_key="transcript",
-        patient_id=patient_id,
-        encounter_id=encounter_id,
-        binary_id=transcript_binary["id"],
-        title=f"Juniper conversation transcript — {date_label}",
-        date_iso=call_end_iso,
-        period_start=call_start_iso,
-        period_end=call_end_iso,
-        device_ref=device_ref,
-        organization_ref=organization_ref,
-    )
-    transcript_resource["id"] = transcript_doc_id
-    transcript_doc = await store.upsert(transcript_resource)
-
-    family_doc_id: str | None = None
-    family_binary_id: str | None = None
-    if family_summary_text is not None:
-        family_binary = await store.create(
-            _binary_resource(
-                family_summary_text, terminology.document_content_type, family_doc_id_alloc
-            )
-        )
-        family_resource = _document_reference(
+    add(
+        note_doc_ref,
+        _document_reference(
             terminology=terminology,
-            category_key="familySummary",
+            category_key="note",
             patient_id=patient_id,
-            encounter_id=encounter_id,
-            binary_id=family_binary["id"],
-            title=f"Juniper family summary — {date_label}",
+            encounter_ref=encounter_ref,
+            binary_ref=note_binary_ref,
+            title=f"Juniper 4M check-in — {date_label}",
             date_iso=call_end_iso,
             period_start=call_start_iso,
             period_end=call_end_iso,
             device_ref=device_ref,
             organization_ref=organization_ref,
-            relates_to_id=transcript_doc_id,
+            relates_to_ref=transcript_doc_ref,
+        ),
+    )
+
+    add(
+        transcript_binary_ref,
+        _binary_resource(transcript_text, terminology.document_content_type, transcript_doc_ref),
+    )
+    add(
+        transcript_doc_ref,
+        _document_reference(
+            terminology=terminology,
+            category_key="transcript",
+            patient_id=patient_id,
+            encounter_ref=encounter_ref,
+            binary_ref=transcript_binary_ref,
+            title=f"Juniper conversation transcript — {date_label}",
+            date_iso=call_end_iso,
+            period_start=call_start_iso,
+            period_end=call_end_iso,
+            device_ref=device_ref,
+            organization_ref=organization_ref,
+        ),
+    )
+
+    if family_summary_text is not None:
+        add(
+            family_binary_ref,
+            _binary_resource(
+                family_summary_text, terminology.document_content_type, family_doc_ref
+            ),
         )
-        family_resource["id"] = family_doc_id_alloc
-        family_doc = await store.upsert(family_resource)
-        family_doc_id = family_doc["id"]
-        family_binary_id = family_binary["id"]
+        add(
+            family_doc_ref,
+            _document_reference(
+                terminology=terminology,
+                category_key="familySummary",
+                patient_id=patient_id,
+                encounter_ref=encounter_ref,
+                binary_ref=family_binary_ref,
+                title=f"Juniper family summary — {date_label}",
+                date_iso=call_end_iso,
+                period_start=call_start_iso,
+                period_end=call_end_iso,
+                device_ref=device_ref,
+                organization_ref=organization_ref,
+                relates_to_ref=transcript_doc_ref,
+            ),
+        )
+
+    response = await store.transaction(
+        {"resourceType": "Bundle", "type": "transaction", "entry": entries}
+    )
+
+    resolved: dict[str, dict[str, Any]] = {}
+    for sent, received in zip(entries, response.get("entry", [])):
+        resource = received.get("resource")
+        if resource is None:
+            raise MedplumError(
+                f"transaction entry for {sent['fullUrl']} has no resource in the response"
+            )
+        resolved[sent["fullUrl"]] = resource
+
+    encounter_id = resolved[encounter_ref]["id"]
+    note_doc = resolved[note_doc_ref]
+    note_binary = resolved[note_binary_ref]
+    transcript_doc = resolved[transcript_doc_ref]
+    transcript_binary = resolved[transcript_binary_ref]
+    family_doc_id = resolved[family_doc_ref]["id"] if family_summary_text is not None else None
+    family_binary_id = (
+        resolved[family_binary_ref]["id"] if family_summary_text is not None else None
+    )
 
     task_ids: list[str] = []
     for task in escalation_tasks:
@@ -962,9 +1021,9 @@ async def write_post_call(
 
     return PostCallWriteResult(
         encounter_id=encounter_id,
-        note_id=note_doc.get("id", note_doc_id),
+        note_id=note_doc["id"],
         note_binary_id=note_binary["id"],
-        transcript_id=transcript_doc.get("id", transcript_doc_id),
+        transcript_id=transcript_doc["id"],
         transcript_binary_id=transcript_binary["id"],
         family_summary_id=family_doc_id,
         family_summary_binary_id=family_binary_id,
