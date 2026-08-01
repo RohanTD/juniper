@@ -19,6 +19,14 @@ export interface AlertsState {
   tasks: Task[] | undefined;
   loading: boolean;
   error: boolean;
+  /**
+   * False once the live subscription has been refused, which is the NORMAL
+   * state for a caregiver — the AccessPolicy is a strict allow-list and
+   * `Subscription` is not on it. Exposed so the UI can say "checking every
+   * minute" rather than leaving the question to the browser console, where a
+   * benign, already-handled 403 reads like a broken app.
+   */
+  live: boolean;
   refresh: () => void;
 }
 
@@ -71,20 +79,23 @@ export function useAlerts(patientRef: string | undefined): AlertsState {
   // so this degrades quietly and says so once.
   const criteria = `Task?patient=${patientRef ?? 'Patient/none'}&code=${categoryToken(TASK_CATEGORY.escalation)}`;
   const warnedRef = useRef(false);
+  const [live, setLive] = useState(true);
   useSubscription(criteria, refresh, {
     onError: (err) => {
+      setLive(false);
       if (!warnedRef.current) {
         warnedRef.current = true;
         console.info(
           '[juniper] live alert subscription unavailable for this account; ' +
-            `falling back to ${POLL_INTERVAL_MS / 1000}s polling.`,
+            `falling back to ${POLL_INTERVAL_MS / 1000}s polling. This is expected ` +
+            'for a caregiver sign-in and alerts still arrive — see src/data/alerts.ts.',
           err
         );
       }
     },
   });
 
-  return { tasks, loading, error, refresh };
+  return { tasks, loading, error, live, refresh };
 }
 
 /** Open (unresolved) alerts — everything not yet completed or cancelled. */

@@ -162,6 +162,15 @@ export default function Dashboard() {
     open.length === 0 ? null : (
       <View>
         <SectionHeader title="Needs attention" />
+        {/* Answers "am I looking at current information?" on the page rather
+            than in the console. Polling is the normal mode for a caregiver:
+            live delivery needs Subscription access the AccessPolicy does not
+            grant, which is an access-model decision, not a bug. */}
+        {!alerts.live ? (
+          <ThemedText variant="meta" color={theme.colors.text.secondary}>
+            CHECKING FOR NEW ALERTS EVERY MINUTE
+          </ThemedText>
+        ) : null}
         <View style={{ gap: theme.spacing.md }}>
           {open.slice(0, INLINE_ALERTS).map((task) => (
             <AlertCard key={task.id} task={task} {...alertControls(task.id)} />
