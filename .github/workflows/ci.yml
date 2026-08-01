@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  voice-service:
+    name: Voice service (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install
+        run: pip install -e "services/voice[dev]"
+      - name: Test
+        run: python -m pytest services/voice/tests -q
+
+  apps-and-packages:
+    name: Apps + packages (typecheck, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test (includes WCAG contrast audit and font-scaling checks)
+        run: npm test
+
+  medplum-config:
+    name: Medplum config (JSON integrity, terminology drift)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate JSON + bundle references
+        run: node medplum/scripts/check.mjs
+      - name: CodeSystems match terminology.json (no drift)
+        run: |
+          node medplum/scripts/generate-codesystems.mjs
+          git diff --exit-code medplum/resources/

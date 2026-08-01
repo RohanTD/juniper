@@ -1,0 +1,19 @@
+{
+  "name": "mobility_deflection",
+  "description": "Patient deflects every mobility question; domain ends the call unassessed.",
+  "turns": [
+    {"speaker": "companion", "text": "Hello Edie, it's June — recorded as always, if that's still alright. How's the week been?"},
+    {"speaker": "patient", "text": "Oh the garden has gone wild, June, the tomatoes are staging a takeover and the marigolds have opinions about it."},
+    {"speaker": "companion", "text": "A takeover! Are you getting out to the garden alright — how are the stairs off the porch treating you?"},
+    {"speaker": "patient", "text": "Did I tell you my granddaughter Maya started college? She's doing biology, she says she'll name a beetle after me."},
+    {"speaker": "companion", "text": "A beetle named Edie — that's immortality. And walking out to see those tomatoes, is that still comfortable for you?"},
+    {"speaker": "patient", "text": "You should see the size of the zucchini. Enormous. I'm giving them to the neighbors before they unionize."},
+    {"speaker": "companion", "text": "I'd sign that petition. Edie, honestly though — the porch steps, the walk to the mailbox, any wobbles lately?"},
+    {"speaker": "patient", "text": "I manage fine."},
+    {"speaker": "companion", "text": "Alright. And your pills — the metformin still going down with breakfast?"},
+    {"speaker": "patient", "text": "Yes, fine."}
+  ],
+  "planted_findings": [
+    {"evidence": "granddaughter Maya started college", "note_text": "Patient engaged and animated discussing family news"}
+  ]
+}

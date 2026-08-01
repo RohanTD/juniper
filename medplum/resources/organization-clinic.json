@@ -1,0 +1,23 @@
+{
+  "resourceType": "Organization",
+  "identifier": [
+    {
+      "system": "https://juniper.health/fhir/identifier/organization",
+      "value": "juniper-pilot-clinic"
+    }
+  ],
+  "active": true,
+  "name": "Juniper Pilot Clinic",
+  "type": [
+    {
+      "text": "Primary care clinic (Juniper pilot site)"
+    }
+  ],
+  "telecom": [
+    {
+      "system": "phone",
+      "value": "+1-301-555-0100",
+      "use": "work"
+    }
+  ]
+}

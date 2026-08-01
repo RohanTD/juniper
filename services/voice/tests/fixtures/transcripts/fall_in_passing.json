@@ -1,0 +1,23 @@
+{
+  "name": "fall_in_passing",
+  "description": "Patient mentions a fall only in passing, framed as nothing.",
+  "turns": [
+    {"speaker": "companion", "text": "Good afternoon, Rosa — it's June from Juniper. Quick reminder that our visit is recorded. How are you today?"},
+    {"speaker": "patient", "text": "Oh hello June, I'm alright, just tidying up the kitchen."},
+    {"speaker": "companion", "text": "What's cooking this week?"},
+    {"speaker": "patient", "text": "I made tamales for my grandson's birthday — took me all Saturday, but he hugged me twice so it was worth it."},
+    {"speaker": "companion", "text": "Two hugs is a fine wage. How are you moving around — the knees behaving?"},
+    {"speaker": "patient", "text": "The knees are the knees. I did go down in the bathroom last Tuesday, slipped on the mat, but I caught the sink so it was nothing, don't fuss."},
+    {"speaker": "companion", "text": "I'm glad the sink was there, Rosa. Did you hit anything when you went down — head, hip, wrist?"},
+    {"speaker": "patient", "text": "Just my pride. A little bruise on the hip maybe. It's yellow now, that means it's healing, my mother always said."},
+    {"speaker": "companion", "text": "Your mother was right about that. Since it happened in the bathroom, would you be open to a grab bar? Your daughter mentioned she could put one in."},
+    {"speaker": "patient", "text": "If it stops the fussing, fine, she can put in her bar."},
+    {"speaker": "companion", "text": "I'll pass that along. And the water pill — still taking it in the mornings?"},
+    {"speaker": "patient", "text": "Yes, every morning, though it keeps me running to the bathroom, which is maybe how the mat got wet, now that I think of it."}
+  ],
+  "planted_findings": [
+    {"evidence": "go down in the bathroom last Tuesday", "note_text": "Fall reported: slipped on bathroom mat last Tuesday, caught herself on the sink"},
+    {"evidence": "little bruise on the hip", "note_text": "resulting hip bruising, no head strike reported"},
+    {"evidence": "keeps me running to the bathroom", "note_text": "Diuretic-related urinary frequency may have contributed to the wet mat"}
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "resourceType": "ClientApplication",
+  "status": "active",
+  "name": "Juniper Voice Service",
+  "description": "Client-credentials identity for services/voice. Reads the patient chart broadly to compile the pre-call EHR brief; writes only Encounter, Binary, DocumentReference and Task. Its ProjectMembership must be linked to the 'Juniper Voice Service Policy' AccessPolicy (see medplum/README.md). No secret is committed: Medplum generates one at creation time; retrieve or rotate it in the Medplum app."
+}

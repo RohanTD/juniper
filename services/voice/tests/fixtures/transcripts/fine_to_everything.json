@@ -1,0 +1,21 @@
+{
+  "name": "fine_to_everything",
+  "description": "Patient answers 'fine' to everything; one sleep finding slips out once.",
+  "turns": [
+    {"speaker": "companion", "text": "Hello Walter, it's June from Juniper for our Thursday visit — this call is recorded, is that alright?"},
+    {"speaker": "patient", "text": "Fine."},
+    {"speaker": "companion", "text": "How has the week been for you?"},
+    {"speaker": "patient", "text": "Fine."},
+    {"speaker": "companion", "text": "And the new blood pressure pills — how are those sitting with you?"},
+    {"speaker": "patient", "text": "Fine, I take them."},
+    {"speaker": "companion", "text": "Glad to hear it. Sleeping alright these days?"},
+    {"speaker": "patient", "text": "Well — not really, I've been up at three most nights and can't get back down. But it's fine."},
+    {"speaker": "companion", "text": "Up at three most nights sounds wearing, Walter, even when you soldier through it. Is anything on your mind at that hour, or is it more the body waking you?"},
+    {"speaker": "patient", "text": "Just awake. It's fine."},
+    {"speaker": "companion", "text": "Alright. I'll make a note of it for Dr. Osei so she can ask you about it properly. Anything you'd want her to know before your visit?"},
+    {"speaker": "patient", "text": "No. It's all fine."}
+  ],
+  "planted_findings": [
+    {"evidence": "up at three most nights", "note_text": "Patient reports waking at 3am most nights with difficulty returning to sleep"}
+  ]
+}

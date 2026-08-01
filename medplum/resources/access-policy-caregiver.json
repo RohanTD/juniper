@@ -1,0 +1,31 @@
+{
+  "resourceType": "AccessPolicy",
+  "name": "Juniper Caregiver Policy",
+  "resource": [
+    {
+      "resourceType": "Patient",
+      "readonly": true,
+      "criteria": "Patient?_id=%patient.id"
+    },
+    {
+      "resourceType": "RelatedPerson",
+      "readonly": true,
+      "criteria": "RelatedPerson?_id=%profile.id"
+    },
+    {
+      "resourceType": "Encounter",
+      "readonly": true,
+      "criteria": "Encounter?subject=%patient&reason-code=https://juniper.health/fhir/CodeSystem/encounter-reason|juniper-4m-checkin"
+    },
+    {
+      "resourceType": "Task",
+      "readonly": true,
+      "criteria": "Task?patient=%patient&code=https://juniper.health/fhir/CodeSystem/task-category|juniper-escalation"
+    },
+    {
+      "resourceType": "DocumentReference",
+      "readonly": true,
+      "criteria": "DocumentReference?subject=%patient&category=https://juniper.health/fhir/CodeSystem/note-category|juniper-family-summary"
+    }
+  ]
+}

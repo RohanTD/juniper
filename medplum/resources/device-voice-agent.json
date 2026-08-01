@@ -1,0 +1,25 @@
+{
+  "resourceType": "Device",
+  "identifier": [
+    {
+      "system": "https://juniper.health/fhir/identifier/device",
+      "value": "juniper-voice-agent"
+    }
+  ],
+  "status": "active",
+  "manufacturer": "Juniper Health",
+  "deviceName": [
+    {
+      "name": "Juniper Voice Agent",
+      "type": "user-friendly-name"
+    }
+  ],
+  "type": {
+    "text": "AI voice agent for recurring 4M geriatric check-in calls"
+  },
+  "note": [
+    {
+      "text": "This Device is the author of every document the voice service writes. AI-generated documents are attributed to this Device, never to a human clinician. Clinician review is recorded on the DocumentReference via authenticator, flipping docStatus from preliminary to final."
+    }
+  ]
+}

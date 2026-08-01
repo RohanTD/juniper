@@ -1,0 +1,680 @@
+"""Medplum FHIR access — broad pre-call reads, narrow post-call writes.
+
+Reads are broad: everything in docs/PLAN.md's read table is fetched once
+pre-call and compiled into a single token-budgeted **EHR brief** held for the
+whole conversation.  No FHIR round trips happen mid-call — they would land
+directly on the latency path.
+
+Writes are narrow: ``Encounter`` -> ``Binary``+``DocumentReference`` (note) ->
+``Binary``+``DocumentReference`` (transcript) -> ``Binary``+
+``DocumentReference`` (family summary, consent-gated) -> escalation ``Task``s.
+Resource shapes follow docs/PLAN.md's FHIR write contract exactly (Device
+author, docStatus preliminary, relatesTo transforms, category codings from
+the terminology package).
+"""
+
+from __future__ import annotations
+
+import base64
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Mapping, Protocol, Sequence
+
+import httpx
+
+from .terminology import Terminology
+
+
+class MedplumError(RuntimeError):
+    pass
+
+
+class ConsentError(MedplumError):
+    """The pre-call consent gate refused to proceed."""
+
+
+class FHIRStore(Protocol):
+    """The surface this module needs — implemented by MedplumClient and by
+    the in-memory test stub."""
+
+    async def search(self, resource_type: str, params: Mapping[str, str]) -> list[dict[str, Any]]: ...
+    async def create(self, resource: Mapping[str, Any]) -> dict[str, Any]: ...
+    async def upsert(self, resource: Mapping[str, Any]) -> dict[str, Any]: ...
+    async def read(self, resource_type: str, resource_id: str) -> dict[str, Any]: ...
+
+
+class MedplumClient:
+    """httpx client speaking plain FHIR REST with OAuth2 client-credentials."""
+
+    def __init__(
+        self,
+        base_url: str,
+        client_id: str,
+        client_secret: str,
+        http: httpx.AsyncClient | None = None,
+    ):
+        self._base = base_url.rstrip("/")
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._http = http or httpx.AsyncClient(timeout=20.0)
+        self._token: str | None = None
+        self._token_expires_at = 0.0
+
+    async def close(self) -> None:
+        await self._http.aclose()
+
+    async def _access_token(self) -> str:
+        if self._token and time.time() < self._token_expires_at - 30:
+            return self._token
+        response = await self._http.post(
+            f"{self._base}/oauth2/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": self._client_id,
+                "client_secret": self._client_secret,
+            },
+        )
+        if response.status_code != 200:
+            raise MedplumError(f"token request failed: {response.status_code} {response.text}")
+        payload = response.json()
+        self._token = payload["access_token"]
+        self._token_expires_at = time.time() + float(payload.get("expires_in", 3600))
+        return self._token
+
+    async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        token = await self._access_token()
+        headers = kwargs.pop("headers", {})
+        headers["Authorization"] = f"Bearer {token}"
+        headers.setdefault("Content-Type", "application/fhir+json")
+        response = await self._http.request(
+            method, f"{self._base}/fhir/R4/{path}", headers=headers, **kwargs
+        )
+        if response.status_code >= 400:
+            raise MedplumError(
+                f"{method} {path} failed: {response.status_code} {response.text}"
+            )
+        return response
+
+    async def search(self, resource_type: str, params: Mapping[str, str]) -> list[dict[str, Any]]:
+        response = await self._request("GET", resource_type, params=dict(params))
+        bundle = response.json()
+        return [
+            entry["resource"]
+            for entry in bundle.get("entry", [])
+            if "resource" in entry
+        ]
+
+    async def create(self, resource: Mapping[str, Any]) -> dict[str, Any]:
+        response = await self._request("POST", resource["resourceType"], json=dict(resource))
+        return response.json()
+
+    async def upsert(self, resource: Mapping[str, Any]) -> dict[str, Any]:
+        """PUT with a client-assigned id (Medplum update-as-create)."""
+        response = await self._request(
+            "PUT", f"{resource['resourceType']}/{resource['id']}", json=dict(resource)
+        )
+        return response.json()
+
+    async def read(self, resource_type: str, resource_id: str) -> dict[str, Any]:
+        response = await self._request("GET", f"{resource_type}/{resource_id}")
+        return response.json()
+
+
+# ---------------------------------------------------------------------------
+# Consent gate
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ConsentStatus:
+    ai_calling: bool = False
+    recording: bool = False
+    family_sharing: bool = False
+    resource_id: str | None = None
+
+    @property
+    def may_dial(self) -> bool:
+        # docs/CONTRACTS.md §3: refuse to dial unless the Consent grants
+        # ai-calling AND call-recording; family-sharing gates only the
+        # family summary generation.
+        return self.ai_calling and self.recording
+
+
+def _collect_provision_codes(provision: Mapping[str, Any], system: str) -> set[str]:
+    codes: set[str] = set()
+    for concept in provision.get("code", []) or []:
+        for coding in concept.get("coding", []) or []:
+            if coding.get("system") == system and coding.get("code"):
+                codes.add(coding["code"])
+    for nested in provision.get("provision", []) or []:
+        codes |= _collect_provision_codes(nested, system)
+    return codes
+
+
+async def verify_consent(
+    store: FHIRStore, patient_id: str, terminology: Terminology
+) -> ConsentStatus:
+    consents = await store.search(
+        "Consent", {"patient": f"Patient/{patient_id}", "status": "active"}
+    )
+    system = terminology.consent_provision_system
+    granted: set[str] = set()
+    resource_id: str | None = None
+    for consent in consents:
+        if consent.get("status") != "active":
+            continue
+        provision = consent.get("provision") or {}
+        codes = _collect_provision_codes(provision, system)
+        if codes:
+            granted |= codes
+            resource_id = consent.get("id", resource_id)
+    return ConsentStatus(
+        ai_calling=terminology.consent_provision("aiCalling").code in granted,
+        recording=terminology.consent_provision("recording").code in granted,
+        family_sharing=terminology.consent_provision("familySharing").code in granted,
+        resource_id=resource_id,
+    )
+
+
+def require_dialing_consent(consent: ConsentStatus, patient_id: str) -> None:
+    if not consent.may_dial:
+        raise ConsentError(
+            f"refusing to dial Patient/{patient_id}: Consent must actively grant "
+            "ai-calling and call-recording"
+        )
+
+
+# ---------------------------------------------------------------------------
+# EHR brief — broad read, compiled once, token-budgeted
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class EHRBrief:
+    text: str
+    patient_id: str
+    patient_name: str
+    preferred_name: str | None
+    language: str | None
+    phone: str | None
+    consent: ConsentStatus
+    care_team_refs: tuple[str, ...]
+    prior_notes: tuple[dict[str, Any], ...]
+    token_estimate: int
+
+
+def estimate_tokens(text: str) -> int:
+    # A deliberately cheap heuristic (~4 chars/token) — the budget exists to
+    # bound prompt growth, not to bill precisely.
+    return (len(text) + 3) // 4
+
+
+def _human_name(name: Mapping[str, Any]) -> str:
+    if name.get("text"):
+        return name["text"]
+    given = " ".join(name.get("given", []) or [])
+    return f"{given} {name.get('family', '')}".strip()
+
+
+def _coding_display(concept: Mapping[str, Any] | None) -> str:
+    if not concept:
+        return ""
+    if concept.get("text"):
+        return concept["text"]
+    for coding in concept.get("coding", []) or []:
+        if coding.get("display"):
+            return coding["display"]
+        if coding.get("code"):
+            return coding["code"]
+    return ""
+
+
+def _medication_display(resource: Mapping[str, Any]) -> str:
+    return _coding_display(resource.get("medicationCodeableConcept")) or "medication"
+
+
+@dataclass
+class _Section:
+    priority: int  # lower = kept longer under budget pressure
+    title: str
+    lines: list[str] = field(default_factory=list)
+
+
+async def compile_ehr_brief(
+    store: FHIRStore,
+    patient_id: str,
+    terminology: Terminology,
+    *,
+    token_budget: int = 2500,
+    enforce_consent: bool = True,
+    today_iso: str | None = None,
+) -> EHRBrief:
+    """Fetch the full read table once and compile — don't concatenate — into a
+    compact digest sized to sit in context for the whole call.
+
+    The consent gate runs here so nothing downstream can dial without it.
+    """
+    patient_ref = f"Patient/{patient_id}"
+    consent = await verify_consent(store, patient_id, terminology)
+    if enforce_consent:
+        require_dialing_consent(consent, patient_id)
+
+    patient = await store.read("Patient", patient_id)
+
+    # Recency-filter aggressively: bounded counts, most-recent-first sorts.
+    conditions = await store.search("Condition", {"patient": patient_ref, "_count": "25"})
+    med_statements = await store.search(
+        "MedicationStatement", {"patient": patient_ref, "_count": "25"}
+    )
+    med_requests = await store.search(
+        "MedicationRequest", {"patient": patient_ref, "_count": "25", "status": "active"}
+    )
+    allergies = await store.search("AllergyIntolerance", {"patient": patient_ref})
+    observations = await store.search(
+        "Observation", {"patient": patient_ref, "_sort": "-date", "_count": "30"}
+    )
+    encounters = await store.search(
+        "Encounter", {"patient": patient_ref, "_sort": "-date", "_count": "10"}
+    )
+    appointment_params = {"patient": patient_ref, "_count": "10"}
+    if today_iso:
+        appointment_params["date"] = f"ge{today_iso}"
+    appointments = await store.search("Appointment", appointment_params)
+    care_plans = await store.search("CarePlan", {"patient": patient_ref, "_count": "10"})
+    goals = await store.search("Goal", {"patient": patient_ref, "_count": "10"})
+    care_teams = await store.search("CareTeam", {"patient": patient_ref})
+    prior_notes = await store.search(
+        "DocumentReference",
+        {
+            "patient": patient_ref,
+            "category": terminology.note_category("note").code,
+            "_sort": "-date",
+            "_count": "3",
+        },
+    )
+
+    # -- identity ----------------------------------------------------------
+    names = patient.get("name", []) or []
+    legal = next((n for n in names if n.get("use") != "nickname"), {})
+    nickname = next((n for n in names if n.get("use") == "nickname"), None)
+    patient_name = _human_name(legal) if legal else patient_id
+    preferred = _human_name(nickname) if nickname else None
+    phone = next(
+        (t.get("value") for t in patient.get("telecom", []) or [] if t.get("system") == "phone"),
+        None,
+    )
+    language = None
+    for communication in patient.get("communication", []) or []:
+        language = _coding_display(communication.get("language")) or language
+
+    care_team_refs: list[str] = []
+    for team in care_teams:
+        for participant in team.get("participant", []) or []:
+            ref = (participant.get("member") or {}).get("reference")
+            if ref:
+                care_team_refs.append(ref)
+
+    # -- sections (priority: lower number survives budget pressure longer) --
+    sections: list[_Section] = []
+
+    identity = _Section(0, "Patient")
+    identity.lines.append(
+        f"{patient_name}"
+        + (f' (goes by "{preferred}")' if preferred else "")
+        + (f", born {patient['birthDate']}" if patient.get("birthDate") else "")
+        + (f", speaks {language}" if language else "")
+    )
+    sections.append(identity)
+
+    meds = _Section(1, "Medications")
+    seen_meds: set[str] = set()
+    for resource in list(med_statements) + list(med_requests):
+        display = _medication_display(resource)
+        dosage = ""
+        dosages = resource.get("dosage") or resource.get("dosageInstruction") or []
+        if dosages and dosages[0].get("text"):
+            dosage = f" — {dosages[0]['text']}"
+        if display not in seen_meds:
+            seen_meds.add(display)
+            meds.lines.append(f"{display}{dosage}")
+    sections.append(meds)
+
+    cond = _Section(1, "Conditions")
+    for resource in conditions:
+        display = _coding_display(resource.get("code"))
+        if display:
+            cond.lines.append(display)
+    sections.append(cond)
+
+    allergy = _Section(1, "Allergies")
+    for resource in allergies:
+        display = _coding_display(resource.get("code"))
+        if display:
+            allergy.lines.append(display)
+    sections.append(allergy)
+
+    recent = _Section(1, "Recent encounters")
+    for resource in encounters:
+        period = resource.get("period", {}) or {}
+        when = (period.get("start") or "")[:10]
+        klass = (resource.get("class") or {}).get("code", "")
+        what = _coding_display((resource.get("type") or [{}])[0]) if resource.get("type") else ""
+        reason = ""
+        if resource.get("reasonCode"):
+            reason = _coding_display(resource["reasonCode"][0])
+        label = ", ".join(part for part in [what or klass, reason] if part)
+        recent.lines.append(f"{when}: {label or 'encounter'}")
+    sections.append(recent)
+
+    upcoming = _Section(1, "Upcoming appointments")
+    for resource in appointments:
+        when = (resource.get("start") or "")[:16].replace("T", " ")
+        what = _coding_display(resource.get("appointmentType")) or _coding_display(
+            (resource.get("serviceType") or [{}])[0] if resource.get("serviceType") else None
+        )
+        description = resource.get("description") or what or "appointment"
+        upcoming.lines.append(f"{when}: {description}")
+    sections.append(upcoming)
+
+    goals_section = _Section(2, "Care goals")
+    for resource in goals:
+        display = _coding_display(resource.get("description"))
+        if display:
+            goals_section.lines.append(display)
+    for resource in care_plans:
+        if resource.get("title"):
+            goals_section.lines.append(f"Care plan: {resource['title']}")
+    sections.append(goals_section)
+
+    obs = _Section(3, "Recent observations")
+    for resource in observations:
+        display = _coding_display(resource.get("code"))
+        value = resource.get("valueQuantity") or {}
+        rendered = ""
+        if value:
+            rendered = f" {value.get('value', '')} {value.get('unit', '')}".rstrip()
+        elif resource.get("valueString"):
+            rendered = f" {resource['valueString']}"
+        when = (resource.get("effectiveDateTime") or "")[:10]
+        if display:
+            obs.lines.append(f"{when}: {display}{rendered}".strip())
+    sections.append(obs)
+
+    notes_section = _Section(2, "Prior Juniper notes")
+    for resource in prior_notes:
+        when = (resource.get("date") or "")[:10]
+        title = ""
+        if resource.get("content"):
+            title = resource["content"][0].get("attachment", {}).get("title", "")
+        notes_section.lines.append(f"{when}: {title or 'Juniper note'}")
+    sections.append(notes_section)
+
+    text = _assemble_within_budget(sections, token_budget)
+
+    return EHRBrief(
+        text=text,
+        patient_id=patient_id,
+        patient_name=patient_name,
+        preferred_name=preferred,
+        language=language,
+        phone=phone,
+        consent=consent,
+        care_team_refs=tuple(care_team_refs),
+        prior_notes=tuple(prior_notes),
+        token_estimate=estimate_tokens(text),
+    )
+
+
+def _assemble_within_budget(sections: Sequence[_Section], token_budget: int) -> str:
+    """Compile sections, trimming line tails from the lowest-priority
+    sections first until the estimate fits the budget."""
+
+    def render(secs: Sequence[_Section]) -> str:
+        parts: list[str] = []
+        for section in secs:
+            if not section.lines:
+                continue
+            parts.append(f"## {section.title}")
+            parts.extend(f"- {line}" for line in section.lines)
+        return "\n".join(parts)
+
+    working = [_Section(s.priority, s.title, list(s.lines)) for s in sections]
+    text = render(working)
+    while estimate_tokens(text) > token_budget:
+        # Drop one line from the tail of the lowest-priority non-empty section.
+        candidates = [s for s in working if s.lines]
+        if not candidates:
+            break
+        victim = max(candidates, key=lambda s: (s.priority, len(s.lines)))
+        if victim.priority == 0 and len(candidates) == 1:
+            # Never trim identity below one line; hard-truncate instead.
+            text = text[: token_budget * 4]
+            break
+        victim.lines.pop()
+        text = render(working)
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Post-call writes — the narrow write surface
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PostCallWriteResult:
+    encounter_id: str
+    note_id: str
+    note_binary_id: str
+    transcript_id: str
+    transcript_binary_id: str
+    family_summary_id: str | None
+    family_summary_binary_id: str | None
+    task_ids: tuple[str, ...]
+
+
+def _binary_resource(text: str, content_type: str, owner_doc_id: str) -> dict[str, Any]:
+    """A Binary always carries securityContext -> its owning DocumentReference.
+
+    Medplum cannot scope Binary reads by criteria in an AccessPolicy — Binary
+    access is governed by securityContext inheritance plus presigned attachment
+    URLs.  The caregiver AccessPolicy grants NO Binary access; family-summary
+    content reaches caregivers only via the presigned content.attachment.url.
+    Pointing securityContext at the Patient (or leaving it unset) would expose
+    the clinical-note and raw-transcript binaries to any caregiver with
+    patient-compartment visibility — a severe leak under that access model.
+    """
+    return {
+        "resourceType": "Binary",
+        "contentType": content_type,
+        "securityContext": {"reference": f"DocumentReference/{owner_doc_id}"},
+        "data": base64.b64encode(text.encode("utf-8")).decode("ascii"),
+    }
+
+
+def _document_reference(
+    *,
+    terminology: Terminology,
+    category_key: str,
+    patient_id: str,
+    encounter_id: str,
+    binary_id: str,
+    title: str,
+    date_iso: str,
+    period_start: str,
+    period_end: str,
+    device_ref: str,
+    organization_ref: str | None,
+    relates_to_id: str | None = None,
+) -> dict[str, Any]:
+    """docs/PLAN.md FHIR write contract, verbatim shape.
+
+    author is a Device, never a Practitioner — AI-generated text must not be
+    attributed to a human clinician.  docStatus sits at 'preliminary';
+    clinician review is what flips it to 'final'.
+    """
+    resource: dict[str, Any] = {
+        "resourceType": "DocumentReference",
+        "status": "current",
+        "docStatus": terminology.doc_status_initial,
+        "type": terminology.note_type.as_codeable_concept(),
+        "category": [terminology.note_category(category_key).as_codeable_concept()],
+        "subject": {"reference": f"Patient/{patient_id}"},
+        "date": date_iso,
+        "author": [{"reference": device_ref}],
+        "context": {
+            "encounter": [{"reference": f"Encounter/{encounter_id}"}],
+            "period": {"start": period_start, "end": period_end},
+        },
+        "content": [
+            {
+                "attachment": {
+                    "contentType": terminology.document_content_type,
+                    "url": f"Binary/{binary_id}",
+                    "title": title,
+                }
+            }
+        ],
+    }
+    if organization_ref:
+        resource["custodian"] = {"reference": organization_ref}
+    if relates_to_id:
+        # The note/family summary is derived from the raw conversation;
+        # relatesTo(transforms) is what keeps every clinical claim auditable.
+        resource["relatesTo"] = [
+            {
+                "code": terminology.relates_to_transcript_code,
+                "target": {"reference": f"DocumentReference/{relates_to_id}"},
+            }
+        ]
+    return resource
+
+
+async def write_post_call(
+    store: FHIRStore,
+    terminology: Terminology,
+    *,
+    patient_id: str,
+    note_text: str,
+    transcript_text: str,
+    family_summary_text: str | None,
+    call_start_iso: str,
+    call_end_iso: str,
+    device_ref: str,
+    organization_ref: str | None,
+    escalation_tasks: Iterable[Mapping[str, Any]] = (),
+    date_label: str | None = None,
+) -> PostCallWriteResult:
+    """Perform the contracted write sequence.
+
+    Order (docs/PLAN.md): Encounter (the anchor) -> Binary+DocumentReference
+    for the clinical note -> the pair for the raw transcript -> the pair for
+    the family summary (only when generated) -> escalation Tasks.
+
+    All three DocumentReference ids are client-assigned (uuid) and written via
+    PUT update-as-create, for two reasons:
+    - every Binary must carry securityContext -> its owning DocumentReference
+      (see _binary_resource), and the Binary is written before its owner;
+    - the note's relatesTo must point at the transcript's DocumentReference,
+      which the contract orders *after* the note.
+    Pre-allocating the ids lets every create carry its full contracted shape
+    with no later amend, while preserving the contracted write order.
+    """
+    date_label = date_label or call_end_iso[:10]
+
+    encounter = await store.create(
+        {
+            "resourceType": "Encounter",
+            "status": "finished",
+            "class": terminology.encounter_class.as_fhir(),
+            "subject": {"reference": f"Patient/{patient_id}"},
+            "period": {"start": call_start_iso, "end": call_end_iso},
+            "reasonCode": [terminology.encounter_reason("fourMCheckIn").as_codeable_concept()],
+        }
+    )
+    encounter_id = encounter["id"]
+
+    note_doc_id = str(uuid.uuid4())
+    transcript_doc_id = str(uuid.uuid4())
+    family_doc_id_alloc = str(uuid.uuid4())
+
+    note_binary = await store.create(
+        _binary_resource(note_text, terminology.document_content_type, note_doc_id)
+    )
+    note_resource = _document_reference(
+        terminology=terminology,
+        category_key="note",
+        patient_id=patient_id,
+        encounter_id=encounter_id,
+        binary_id=note_binary["id"],
+        title=f"Juniper 4M check-in — {date_label}",
+        date_iso=call_end_iso,
+        period_start=call_start_iso,
+        period_end=call_end_iso,
+        device_ref=device_ref,
+        organization_ref=organization_ref,
+        relates_to_id=transcript_doc_id,
+    )
+    note_resource["id"] = note_doc_id
+    note_doc = await store.upsert(note_resource)
+
+    transcript_binary = await store.create(
+        _binary_resource(transcript_text, terminology.document_content_type, transcript_doc_id)
+    )
+    transcript_resource = _document_reference(
+        terminology=terminology,
+        category_key="transcript",
+        patient_id=patient_id,
+        encounter_id=encounter_id,
+        binary_id=transcript_binary["id"],
+        title=f"Juniper conversation transcript — {date_label}",
+        date_iso=call_end_iso,
+        period_start=call_start_iso,
+        period_end=call_end_iso,
+        device_ref=device_ref,
+        organization_ref=organization_ref,
+    )
+    transcript_resource["id"] = transcript_doc_id
+    transcript_doc = await store.upsert(transcript_resource)
+
+    family_doc_id: str | None = None
+    family_binary_id: str | None = None
+    if family_summary_text is not None:
+        family_binary = await store.create(
+            _binary_resource(
+                family_summary_text, terminology.document_content_type, family_doc_id_alloc
+            )
+        )
+        family_resource = _document_reference(
+            terminology=terminology,
+            category_key="familySummary",
+            patient_id=patient_id,
+            encounter_id=encounter_id,
+            binary_id=family_binary["id"],
+            title=f"Juniper family summary — {date_label}",
+            date_iso=call_end_iso,
+            period_start=call_start_iso,
+            period_end=call_end_iso,
+            device_ref=device_ref,
+            organization_ref=organization_ref,
+            relates_to_id=transcript_doc_id,
+        )
+        family_resource["id"] = family_doc_id_alloc
+        family_doc = await store.upsert(family_resource)
+        family_doc_id = family_doc["id"]
+        family_binary_id = family_binary["id"]
+
+    task_ids: list[str] = []
+    for task in escalation_tasks:
+        task = dict(task)
+        task["encounter"] = {"reference": f"Encounter/{encounter_id}"}
+        created = await store.create(task)
+        task_ids.append(created["id"])
+
+    return PostCallWriteResult(
+        encounter_id=encounter_id,
+        note_id=note_doc.get("id", note_doc_id),
+        note_binary_id=note_binary["id"],
+        transcript_id=transcript_doc.get("id", transcript_doc_id),
+        transcript_binary_id=transcript_binary["id"],
+        family_summary_id=family_doc_id,
+        family_summary_binary_id=family_binary_id,
+        task_ids=tuple(task_ids),
+    )

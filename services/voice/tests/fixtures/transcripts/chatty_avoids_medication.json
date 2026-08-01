@@ -1,0 +1,19 @@
+{
+  "name": "chatty_avoids_medication",
+  "description": "Cheerfully talkative about everything except medication; changes the subject every time pills come up.",
+  "turns": [
+    {"speaker": "companion", "text": "Good morning Harold — June from Juniper, recorded as usual if that's alright. How's life?"},
+    {"speaker": "patient", "text": "June! Grand to hear you. The bowling league made the finals, the grandkids were over Sunday, and I fixed the screen door myself, thank you very much."},
+    {"speaker": "companion", "text": "Finals! I want the whole story. Before that though — how's the new heart pill agreeing with you?"},
+    {"speaker": "patient", "text": "Oh you know. So the finals — we were down forty pins going into the last frame, and Murray, bless him, bowls the game of his life."},
+    {"speaker": "companion", "text": "Murray came through! And you — did the pharmacy sort out that refill you mentioned last time?"},
+    {"speaker": "patient", "text": "The pharmacy, the pharmacy, who can keep track. Did I mention my tomato plants? Betty says they're the best on the street and Betty does not hand out compliments."},
+    {"speaker": "companion", "text": "High praise from Betty is currency. Harold, I do need to ask properly — are you actually getting the amiodarone down every day?"},
+    {"speaker": "patient", "text": "Look at the time, the fellas will be at the lanes. You'd love the lanes, June, they put in new lights."},
+    {"speaker": "companion", "text": "New lights and old friends — hard to compete. But Harold, this one matters: the heart pill. Every day? Most days? Tell me straight, no wrong answers."},
+    {"speaker": "patient", "text": "Some days it makes me feel washed out, so on bowling days I skip it, if you must know. Don't tell Dr. Reyes like it's a scandal."}
+  ],
+  "planted_findings": [
+    {"evidence": "on bowling days I skip it", "note_text": "Patient reports intentionally skipping amiodarone on activity days due to fatigue side effect"}
+  ]
+}

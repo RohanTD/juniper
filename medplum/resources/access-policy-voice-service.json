@@ -1,0 +1,25 @@
+{
+  "resourceType": "AccessPolicy",
+  "name": "Juniper Voice Service Policy",
+  "resource": [
+    { "resourceType": "Patient", "readonly": true },
+    { "resourceType": "RelatedPerson", "readonly": true },
+    { "resourceType": "Practitioner", "readonly": true },
+    { "resourceType": "Device", "readonly": true },
+    { "resourceType": "Organization", "readonly": true },
+    { "resourceType": "Consent", "readonly": true },
+    { "resourceType": "CareTeam", "readonly": true },
+    { "resourceType": "Condition", "readonly": true },
+    { "resourceType": "MedicationRequest", "readonly": true },
+    { "resourceType": "MedicationStatement", "readonly": true },
+    { "resourceType": "AllergyIntolerance", "readonly": true },
+    { "resourceType": "Observation", "readonly": true },
+    { "resourceType": "Appointment", "readonly": true },
+    { "resourceType": "CarePlan", "readonly": true },
+    { "resourceType": "Goal", "readonly": true },
+    { "resourceType": "Encounter" },
+    { "resourceType": "Binary" },
+    { "resourceType": "DocumentReference" },
+    { "resourceType": "Task" }
+  ]
+}

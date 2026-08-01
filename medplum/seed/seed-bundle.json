@@ -1,0 +1,1725 @@
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "entry": [
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000001",
+      "resource": {
+        "resourceType": "Patient",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/mrn",
+            "value": "JUN-0001"
+          }
+        ],
+        "active": true,
+        "name": [
+          {
+            "use": "official",
+            "family": "Alvarez",
+            "given": ["Margaret", "Rose"]
+          },
+          {
+            "use": "nickname",
+            "given": ["Peggy"]
+          }
+        ],
+        "telecom": [
+          {
+            "system": "phone",
+            "value": "+1-301-555-0142",
+            "use": "home"
+          }
+        ],
+        "gender": "female",
+        "birthDate": "1946-03-14",
+        "address": [
+          {
+            "use": "home",
+            "line": ["4108 Chestnut Hill Road"],
+            "city": "Silver Spring",
+            "state": "MD",
+            "postalCode": "20901",
+            "country": "US"
+          }
+        ],
+        "maritalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus",
+              "code": "W",
+              "display": "Widowed"
+            }
+          ]
+        },
+        "communication": [
+          {
+            "language": {
+              "coding": [
+                {
+                  "system": "urn:ietf:bcp:47",
+                  "code": "en-US",
+                  "display": "English (United States)"
+                }
+              ],
+              "text": "English"
+            },
+            "preferred": true
+          }
+        ],
+        "generalPractitioner": [
+          {
+            "reference": "urn:uuid:a1000000-0000-4000-8000-000000000002",
+            "display": "Dr. Priya Chen"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "Patient",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/mrn|JUN-0001"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000002",
+      "resource": {
+        "resourceType": "Practitioner",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "pcp-priya-chen"
+          }
+        ],
+        "active": true,
+        "name": [
+          {
+            "use": "official",
+            "family": "Chen",
+            "given": ["Priya"],
+            "prefix": ["Dr."],
+            "suffix": ["MD"]
+          }
+        ],
+        "telecom": [
+          {
+            "system": "phone",
+            "value": "+1-301-555-0119",
+            "use": "work"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "Practitioner",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|pcp-priya-chen"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000003",
+      "resource": {
+        "resourceType": "RelatedPerson",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-caregiver-carmen"
+          }
+        ],
+        "active": true,
+        "patient": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001",
+          "display": "Margaret Alvarez"
+        },
+        "relationship": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/v3-RoleCode",
+                "code": "DAUC",
+                "display": "daughter"
+              }
+            ],
+            "text": "Daughter"
+          }
+        ],
+        "name": [
+          {
+            "use": "official",
+            "family": "Reyes",
+            "given": ["Carmen"]
+          }
+        ],
+        "telecom": [
+          {
+            "system": "phone",
+            "value": "+1-301-555-0186",
+            "use": "mobile"
+          },
+          {
+            "system": "email",
+            "value": "carmen.reyes@example.com"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "RelatedPerson",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-caregiver-carmen"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000004",
+      "resource": {
+        "resourceType": "CareTeam",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-care-team"
+          }
+        ],
+        "status": "active",
+        "name": "Margaret Alvarez care team",
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001",
+          "display": "Margaret Alvarez"
+        },
+        "period": {
+          "start": "2026-06-10"
+        },
+        "participant": [
+          {
+            "role": [
+              {
+                "coding": [
+                  {
+                    "system": "http://snomed.info/sct",
+                    "code": "133932002",
+                    "display": "Caregiver"
+                  }
+                ]
+              }
+            ],
+            "member": {
+              "reference": "urn:uuid:a1000000-0000-4000-8000-000000000003",
+              "display": "Carmen Reyes (daughter)"
+            }
+          },
+          {
+            "role": [
+              {
+                "coding": [
+                  {
+                    "system": "http://snomed.info/sct",
+                    "code": "446050000",
+                    "display": "Primary care physician"
+                  }
+                ]
+              }
+            ],
+            "member": {
+              "reference": "urn:uuid:a1000000-0000-4000-8000-000000000002",
+              "display": "Dr. Priya Chen"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "CareTeam",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-care-team"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000005",
+      "resource": {
+        "resourceType": "Consent",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-consent"
+          }
+        ],
+        "status": "active",
+        "scope": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/consentscope",
+              "code": "patient-privacy",
+              "display": "Privacy Consent"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://loinc.org",
+                "code": "59284-0",
+                "display": "Patient Consent"
+              }
+            ]
+          }
+        ],
+        "patient": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001",
+          "display": "Margaret Alvarez"
+        },
+        "dateTime": "2026-06-10T15:30:00-04:00",
+        "performer": [
+          {
+            "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001",
+            "display": "Margaret Alvarez"
+          }
+        ],
+        "policy": [
+          {
+            "uri": "https://juniper.health/policies/ai-companion-consent/v1"
+          }
+        ],
+        "provision": {
+          "provision": [
+            {
+              "type": "permit",
+              "code": [
+                {
+                  "coding": [
+                    {
+                      "system": "https://juniper.health/fhir/CodeSystem/consent-provision",
+                      "code": "ai-calling",
+                      "display": "Consent to recurring AI check-in calls"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "permit",
+              "code": [
+                {
+                  "coding": [
+                    {
+                      "system": "https://juniper.health/fhir/CodeSystem/consent-provision",
+                      "code": "call-recording",
+                      "display": "Consent to call recording and transcription"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "permit",
+              "code": [
+                {
+                  "coding": [
+                    {
+                      "system": "https://juniper.health/fhir/CodeSystem/consent-provision",
+                      "code": "family-sharing",
+                      "display": "Consent to share summaries with family caregivers"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "request": {
+        "method": "POST",
+        "url": "Consent",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-consent"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000006",
+      "resource": {
+        "resourceType": "Condition",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-condition-hypertension"
+          }
+        ],
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                "code": "problem-list-item",
+                "display": "Problem List Item"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "38341003",
+              "display": "Hypertension"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "onsetDateTime": "2009"
+      },
+      "request": {
+        "method": "POST",
+        "url": "Condition",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-condition-hypertension"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000007",
+      "resource": {
+        "resourceType": "Condition",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-condition-type-2-diabetes"
+          }
+        ],
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                "code": "problem-list-item",
+                "display": "Problem List Item"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "44054006",
+              "display": "Diabetes mellitus type 2"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "onsetDateTime": "2013"
+      },
+      "request": {
+        "method": "POST",
+        "url": "Condition",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-condition-type-2-diabetes"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000008",
+      "resource": {
+        "resourceType": "Condition",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-condition-osteoarthritis"
+          }
+        ],
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                "code": "problem-list-item",
+                "display": "Problem List Item"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "396275006",
+              "display": "Osteoarthritis"
+            }
+          ],
+          "text": "Osteoarthritis, both knees"
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "onsetDateTime": "2016"
+      },
+      "request": {
+        "method": "POST",
+        "url": "Condition",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-condition-osteoarthritis"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000009",
+      "resource": {
+        "resourceType": "Condition",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-condition-hyperlipidemia"
+          }
+        ],
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                "code": "problem-list-item",
+                "display": "Problem List Item"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "55822004",
+              "display": "Hyperlipidemia"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "onsetDateTime": "2011"
+      },
+      "request": {
+        "method": "POST",
+        "url": "Condition",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-condition-hyperlipidemia"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-00000000000a",
+      "resource": {
+        "resourceType": "Condition",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-condition-atrial-fibrillation"
+          }
+        ],
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                "code": "problem-list-item",
+                "display": "Problem List Item"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "49436004",
+              "display": "Atrial fibrillation"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "onsetDateTime": "2022"
+      },
+      "request": {
+        "method": "POST",
+        "url": "Condition",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-condition-atrial-fibrillation"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-00000000000b",
+      "resource": {
+        "resourceType": "Condition",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-condition-osteoporosis"
+          }
+        ],
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                "code": "problem-list-item",
+                "display": "Problem List Item"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "64859006",
+              "display": "Osteoporosis"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "onsetDateTime": "2019"
+      },
+      "request": {
+        "method": "POST",
+        "url": "Condition",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-condition-osteoporosis"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-00000000000c",
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-rx-lisinopril"
+          }
+        ],
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "314076",
+              "display": "lisinopril 10 MG Oral Tablet"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "authoredOn": "2026-07-12",
+        "requester": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000002",
+          "display": "Dr. Priya Chen"
+        },
+        "reasonReference": [
+          {
+            "reference": "urn:uuid:a1000000-0000-4000-8000-000000000006",
+            "display": "Hypertension"
+          }
+        ],
+        "dosageInstruction": [
+          {
+            "text": "One tablet by mouth every morning"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "MedicationRequest",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-rx-lisinopril"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-00000000000d",
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-rx-metformin"
+          }
+        ],
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "860975",
+              "display": "24 HR metformin hydrochloride 500 MG Extended Release Oral Tablet"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "authoredOn": "2026-07-12",
+        "requester": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000002",
+          "display": "Dr. Priya Chen"
+        },
+        "reasonReference": [
+          {
+            "reference": "urn:uuid:a1000000-0000-4000-8000-000000000007",
+            "display": "Diabetes mellitus type 2"
+          }
+        ],
+        "dosageInstruction": [
+          {
+            "text": "One tablet by mouth with dinner"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "MedicationRequest",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-rx-metformin"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-00000000000e",
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-rx-atorvastatin"
+          }
+        ],
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "617312",
+              "display": "atorvastatin 20 MG Oral Tablet"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "authoredOn": "2026-07-12",
+        "requester": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000002",
+          "display": "Dr. Priya Chen"
+        },
+        "reasonReference": [
+          {
+            "reference": "urn:uuid:a1000000-0000-4000-8000-000000000009",
+            "display": "Hyperlipidemia"
+          }
+        ],
+        "dosageInstruction": [
+          {
+            "text": "One tablet by mouth at bedtime"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "MedicationRequest",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-rx-atorvastatin"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-00000000000f",
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-rx-amlodipine"
+          }
+        ],
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "197361",
+              "display": "amlodipine 5 MG Oral Tablet"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "authoredOn": "2026-07-12",
+        "requester": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000002",
+          "display": "Dr. Priya Chen"
+        },
+        "reasonReference": [
+          {
+            "reference": "urn:uuid:a1000000-0000-4000-8000-000000000006",
+            "display": "Hypertension"
+          }
+        ],
+        "dosageInstruction": [
+          {
+            "text": "One tablet by mouth every morning"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "MedicationRequest",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-rx-amlodipine"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000010",
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-rx-warfarin"
+          }
+        ],
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "855332",
+              "display": "warfarin sodium 5 MG Oral Tablet"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "authoredOn": "2026-07-12",
+        "requester": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000002",
+          "display": "Dr. Priya Chen"
+        },
+        "reasonReference": [
+          {
+            "reference": "urn:uuid:a1000000-0000-4000-8000-00000000000a",
+            "display": "Atrial fibrillation"
+          }
+        ],
+        "dosageInstruction": [
+          {
+            "text": "One tablet by mouth daily at 6 PM; dose adjusted per INR by anticoagulation clinic"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "MedicationRequest",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-rx-warfarin"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000011",
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-rx-furosemide"
+          }
+        ],
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "310429",
+              "display": "furosemide 20 MG Oral Tablet"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "authoredOn": "2026-07-12",
+        "requester": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000002",
+          "display": "Dr. Priya Chen"
+        },
+        "reasonCode": [
+          {
+            "text": "Lower-leg edema"
+          }
+        ],
+        "dosageInstruction": [
+          {
+            "text": "One tablet by mouth each morning"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "MedicationRequest",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-rx-furosemide"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000012",
+      "resource": {
+        "resourceType": "MedicationStatement",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-otc-aspirin"
+          }
+        ],
+        "status": "active",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "243670",
+              "display": "aspirin 81 MG Oral Tablet"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "dateAsserted": "2026-07-29",
+        "informationSource": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001",
+          "display": "Margaret Alvarez (self-reported)"
+        },
+        "note": [
+          {
+            "text": "Patient-reported daily low-dose aspirin, self-started years ago and not on the active medication list. Flagged for review given concurrent warfarin."
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "MedicationStatement",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-otc-aspirin"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000013",
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-allergy-penicillin"
+          }
+        ],
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "type": "allergy",
+        "category": ["medication"],
+        "criticality": "low",
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "91936005",
+              "display": "Allergy to penicillin"
+            }
+          ]
+        },
+        "patient": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "reaction": [
+          {
+            "manifestation": [
+              {
+                "coding": [
+                  {
+                    "system": "http://snomed.info/sct",
+                    "code": "126485001",
+                    "display": "Urticaria"
+                  }
+                ]
+              }
+            ],
+            "severity": "moderate"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "AllergyIntolerance",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-allergy-penicillin"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000014",
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-allergy-cashew"
+          }
+        ],
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "type": "allergy",
+        "category": ["food"],
+        "criticality": "high",
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "227493005",
+              "display": "Cashew nuts"
+            }
+          ]
+        },
+        "patient": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "reaction": [
+          {
+            "manifestation": [
+              {
+                "coding": [
+                  {
+                    "system": "http://snomed.info/sct",
+                    "code": "39579001",
+                    "display": "Anaphylactic reaction"
+                  }
+                ]
+              }
+            ],
+            "severity": "severe"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "AllergyIntolerance",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-allergy-cashew"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000015",
+      "resource": {
+        "resourceType": "Observation",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-bp-2026-07-15"
+          }
+        ],
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "vital-signs",
+                "display": "Vital Signs"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "85354-9",
+              "display": "Blood pressure panel with all children optional"
+            }
+          ],
+          "text": "Blood pressure"
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "effectiveDateTime": "2026-07-15T09:30:00-04:00",
+        "component": [
+          {
+            "code": {
+              "coding": [
+                {
+                  "system": "http://loinc.org",
+                  "code": "8480-6",
+                  "display": "Systolic blood pressure"
+                }
+              ]
+            },
+            "valueQuantity": {
+              "value": 142,
+              "unit": "mmHg",
+              "system": "http://unitsofmeasure.org",
+              "code": "mm[Hg]"
+            }
+          },
+          {
+            "code": {
+              "coding": [
+                {
+                  "system": "http://loinc.org",
+                  "code": "8462-4",
+                  "display": "Diastolic blood pressure"
+                }
+              ]
+            },
+            "valueQuantity": {
+              "value": 84,
+              "unit": "mmHg",
+              "system": "http://unitsofmeasure.org",
+              "code": "mm[Hg]"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "Observation",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-bp-2026-07-15"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000016",
+      "resource": {
+        "resourceType": "Observation",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-bp-2026-07-29"
+          }
+        ],
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "vital-signs",
+                "display": "Vital Signs"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "85354-9",
+              "display": "Blood pressure panel with all children optional"
+            }
+          ],
+          "text": "Blood pressure"
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "effectiveDateTime": "2026-07-29T10:00:00-04:00",
+        "component": [
+          {
+            "code": {
+              "coding": [
+                {
+                  "system": "http://loinc.org",
+                  "code": "8480-6",
+                  "display": "Systolic blood pressure"
+                }
+              ]
+            },
+            "valueQuantity": {
+              "value": 136,
+              "unit": "mmHg",
+              "system": "http://unitsofmeasure.org",
+              "code": "mm[Hg]"
+            }
+          },
+          {
+            "code": {
+              "coding": [
+                {
+                  "system": "http://loinc.org",
+                  "code": "8462-4",
+                  "display": "Diastolic blood pressure"
+                }
+              ]
+            },
+            "valueQuantity": {
+              "value": 78,
+              "unit": "mmHg",
+              "system": "http://unitsofmeasure.org",
+              "code": "mm[Hg]"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "Observation",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-bp-2026-07-29"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000017",
+      "resource": {
+        "resourceType": "Observation",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-weight-2026-05-20"
+          }
+        ],
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "vital-signs",
+                "display": "Vital Signs"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "29463-7",
+              "display": "Body weight"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "effectiveDateTime": "2026-05-20T09:15:00-04:00",
+        "valueQuantity": {
+          "value": 64.4,
+          "unit": "kg",
+          "system": "http://unitsofmeasure.org",
+          "code": "kg"
+        }
+      },
+      "request": {
+        "method": "POST",
+        "url": "Observation",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-weight-2026-05-20"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000018",
+      "resource": {
+        "resourceType": "Observation",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-weight-2026-06-24"
+          }
+        ],
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "vital-signs",
+                "display": "Vital Signs"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "29463-7",
+              "display": "Body weight"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "effectiveDateTime": "2026-06-24T10:45:00-04:00",
+        "valueQuantity": {
+          "value": 63.5,
+          "unit": "kg",
+          "system": "http://unitsofmeasure.org",
+          "code": "kg"
+        }
+      },
+      "request": {
+        "method": "POST",
+        "url": "Observation",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-weight-2026-06-24"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-000000000019",
+      "resource": {
+        "resourceType": "Observation",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-weight-2026-07-29"
+          }
+        ],
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "vital-signs",
+                "display": "Vital Signs"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "29463-7",
+              "display": "Body weight"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "effectiveDateTime": "2026-07-29T10:00:00-04:00",
+        "valueQuantity": {
+          "value": 62.8,
+          "unit": "kg",
+          "system": "http://unitsofmeasure.org",
+          "code": "kg"
+        }
+      },
+      "request": {
+        "method": "POST",
+        "url": "Observation",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-weight-2026-07-29"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-00000000001a",
+      "resource": {
+        "resourceType": "Observation",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-phq2-2026-07-29"
+          }
+        ],
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "survey",
+                "display": "Survey"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "55758-7",
+              "display": "Patient Health Questionnaire 2 item (PHQ-2) total score [Reported]"
+            }
+          ],
+          "text": "PHQ-2 depression screen"
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001"
+        },
+        "effectiveDateTime": "2026-07-29T10:15:00-04:00",
+        "valueQuantity": {
+          "value": 1,
+          "unit": "{score}",
+          "system": "http://unitsofmeasure.org",
+          "code": "{score}"
+        }
+      },
+      "request": {
+        "method": "POST",
+        "url": "Observation",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-phq2-2026-07-29"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-00000000001b",
+      "resource": {
+        "resourceType": "Encounter",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-hospitalization-2026-07"
+          }
+        ],
+        "status": "finished",
+        "class": {
+          "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+          "code": "IMP",
+          "display": "inpatient encounter"
+        },
+        "type": [
+          {
+            "text": "Inpatient admission after a fall at home"
+          }
+        ],
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001",
+          "display": "Margaret Alvarez"
+        },
+        "participant": [
+          {
+            "individual": {
+              "reference": "urn:uuid:a1000000-0000-4000-8000-000000000002",
+              "display": "Dr. Priya Chen"
+            }
+          }
+        ],
+        "period": {
+          "start": "2026-07-08T14:20:00-04:00",
+          "end": "2026-07-12T11:05:00-04:00"
+        },
+        "reasonCode": [
+          {
+            "coding": [
+              {
+                "system": "http://snomed.info/sct",
+                "code": "1912002",
+                "display": "Fall"
+              }
+            ],
+            "text": "Fall at home with brief loss of consciousness; admitted for observation and medication review"
+          }
+        ],
+        "hospitalization": {
+          "dischargeDisposition": {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/discharge-disposition",
+                "code": "home",
+                "display": "Home"
+              }
+            ]
+          }
+        }
+      },
+      "request": {
+        "method": "POST",
+        "url": "Encounter",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-hospitalization-2026-07"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-00000000001c",
+      "resource": {
+        "resourceType": "Appointment",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-followup-2026-08-07"
+          }
+        ],
+        "status": "booked",
+        "appointmentType": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/v2-0276",
+              "code": "FOLLOWUP",
+              "display": "A follow up visit from a previously completed appointment"
+            }
+          ]
+        },
+        "description": "Post-discharge follow-up with Dr. Priya Chen",
+        "start": "2026-08-07T10:15:00-04:00",
+        "end": "2026-08-07T10:45:00-04:00",
+        "participant": [
+          {
+            "actor": {
+              "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001",
+              "display": "Margaret Alvarez"
+            },
+            "required": "required",
+            "status": "accepted"
+          },
+          {
+            "actor": {
+              "reference": "urn:uuid:a1000000-0000-4000-8000-000000000002",
+              "display": "Dr. Priya Chen"
+            },
+            "required": "required",
+            "status": "accepted"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "Appointment",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-followup-2026-08-07"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-00000000001d",
+      "resource": {
+        "resourceType": "Goal",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-goal-mailbox"
+          }
+        ],
+        "lifecycleStatus": "active",
+        "achievementStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/goal-achievement",
+              "code": "in-progress",
+              "display": "In Progress"
+            }
+          ]
+        },
+        "description": {
+          "text": "Walk to the mailbox and back once a day without the walker"
+        },
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001",
+          "display": "Margaret Alvarez"
+        },
+        "startDate": "2026-07-12",
+        "target": [
+          {
+            "dueDate": "2026-09-30"
+          }
+        ],
+        "expressedBy": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001",
+          "display": "Margaret Alvarez"
+        }
+      },
+      "request": {
+        "method": "POST",
+        "url": "Goal",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-goal-mailbox"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:a1000000-0000-4000-8000-00000000001e",
+      "resource": {
+        "resourceType": "CarePlan",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "alvarez-careplan-fall-prevention"
+          }
+        ],
+        "status": "active",
+        "intent": "plan",
+        "title": "Post-discharge fall prevention and heart health",
+        "description": "Recover strength after the July hospitalization, prevent further falls, and keep blood pressure and INR in range.",
+        "subject": {
+          "reference": "urn:uuid:a1000000-0000-4000-8000-000000000001",
+          "display": "Margaret Alvarez"
+        },
+        "period": {
+          "start": "2026-07-12"
+        },
+        "careTeam": [
+          {
+            "reference": "urn:uuid:a1000000-0000-4000-8000-000000000004"
+          }
+        ],
+        "addresses": [
+          {
+            "reference": "urn:uuid:a1000000-0000-4000-8000-00000000000b",
+            "display": "Osteoporosis"
+          },
+          {
+            "reference": "urn:uuid:a1000000-0000-4000-8000-00000000000a",
+            "display": "Atrial fibrillation"
+          }
+        ],
+        "goal": [
+          {
+            "reference": "urn:uuid:a1000000-0000-4000-8000-00000000001d"
+          }
+        ],
+        "activity": [
+          {
+            "detail": {
+              "status": "in-progress",
+              "code": {
+                "text": "Home physical therapy visits twice weekly"
+              }
+            }
+          },
+          {
+            "detail": {
+              "status": "in-progress",
+              "code": {
+                "text": "Morning blood pressure log, reviewed at next PCP visit"
+              }
+            }
+          },
+          {
+            "detail": {
+              "status": "scheduled",
+              "code": {
+                "text": "INR check at anticoagulation clinic"
+              },
+              "scheduledString": "Every 2 weeks"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "CarePlan",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|alvarez-careplan-fall-prevention"
+      }
+    }
+  ]
+}

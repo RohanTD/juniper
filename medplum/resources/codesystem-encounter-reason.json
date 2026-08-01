@@ -1,0 +1,17 @@
+{
+  "resourceType": "CodeSystem",
+  "url": "https://juniper.health/fhir/CodeSystem/encounter-reason",
+  "name": "JuniperEncounterReason",
+  "title": "Juniper Encounter Reasons",
+  "status": "active",
+  "publisher": "Juniper Health",
+  "caseSensitive": true,
+  "content": "complete",
+  "count": 1,
+  "concept": [
+    {
+      "code": "juniper-4m-checkin",
+      "display": "Juniper 4M check-in call"
+    }
+  ]
+}

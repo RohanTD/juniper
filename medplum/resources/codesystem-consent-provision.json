@@ -1,0 +1,26 @@
+{
+  "resourceType": "CodeSystem",
+  "url": "https://juniper.health/fhir/CodeSystem/consent-provision",
+  "name": "JuniperConsentProvision",
+  "title": "Juniper Consent Provisions",
+  "status": "active",
+  "publisher": "Juniper Health",
+  "description": "Three separate provisions because they are genuinely separate claims: agreeing to be called is not agreeing to be recorded, and neither is agreeing that family reads the summaries.",
+  "caseSensitive": true,
+  "content": "complete",
+  "count": 3,
+  "concept": [
+    {
+      "code": "ai-calling",
+      "display": "Consent to recurring AI check-in calls"
+    },
+    {
+      "code": "call-recording",
+      "display": "Consent to call recording and transcription"
+    },
+    {
+      "code": "family-sharing",
+      "display": "Consent to share summaries with family caregivers"
+    }
+  ]
+}

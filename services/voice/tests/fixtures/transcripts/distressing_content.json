@@ -1,0 +1,20 @@
+{
+  "name": "distressing_content",
+  "description": "Clinically necessary but distressing content: low mood with passive ideation phrasing that a family reader would find alarming if stated clinically.",
+  "turns": [
+    {"speaker": "companion", "text": "Hello Margaret, it's June from Juniper — recorded, as ever, if that's alright. How are you holding up this week?"},
+    {"speaker": "patient", "text": "Oh, I'm here. The house is quiet since Bella passed — a dog fills more of a house than you'd think."},
+    {"speaker": "companion", "text": "She really does leave a Bella-shaped silence. How have the days been feeling without her?"},
+    {"speaker": "patient", "text": "Long. I'll be honest with you June, some mornings I lie there and wonder what the point of getting up is. I do get up. But I wonder."},
+    {"speaker": "companion", "text": "Thank you for telling me something that honest, Margaret. When you wonder that, is it tiredness talking, or do thoughts ever go somewhere darker — hurting yourself, not wanting to be here?"},
+    {"speaker": "patient", "text": "No, nothing like that, nothing dark. I'd never. It's just the grey mornings. By ten I'm alright, especially if my sister calls."},
+    {"speaker": "companion", "text": "Grey mornings that lift by ten, and a sister who helps — I'm noting both. Would you be open to me mentioning this to Dr. Imani so she can check in on your mood at your visit?"},
+    {"speaker": "patient", "text": "You can tell her. She's kind about these things. And maybe don't make it sound worse than it is — it's missing Bella, mostly."},
+    {"speaker": "companion", "text": "I'll say it just as you said it. Are you still eating regular meals through the grey mornings?"},
+    {"speaker": "patient", "text": "Toast, mostly, until lunch. Dinner I cook properly. My appetite went with the dog but it's coming back."}
+  ],
+  "planted_findings": [
+    {"evidence": "wonder what the point of getting up is", "note_text": "Passive low-mood ideation reported (\"wonders what the point of getting up is\"); patient explicitly denies self-harm ideation"},
+    {"evidence": "Toast, mostly, until lunch", "note_text": "Reduced morning appetite following pet loss, improving"}
+  ]
+}

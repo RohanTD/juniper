@@ -1,0 +1,522 @@
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "entry": [
+    {
+      "fullUrl": "urn:uuid:b2000000-0000-4000-8000-000000000001",
+      "resource": {
+        "resourceType": "Patient",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/mrn",
+            "value": "JUN-0002"
+          }
+        ],
+        "active": true,
+        "name": [
+          {
+            "use": "official",
+            "family": "Nakamura",
+            "given": ["Harold"]
+          },
+          {
+            "use": "nickname",
+            "given": ["Hal"]
+          }
+        ],
+        "telecom": [
+          {
+            "system": "phone",
+            "value": "+1-410-555-0173",
+            "use": "home"
+          }
+        ],
+        "gender": "male",
+        "birthDate": "1943-11-02",
+        "address": [
+          {
+            "use": "home",
+            "line": ["215 Roland View Avenue"],
+            "city": "Baltimore",
+            "state": "MD",
+            "postalCode": "21212",
+            "country": "US"
+          }
+        ],
+        "communication": [
+          {
+            "language": {
+              "coding": [
+                {
+                  "system": "urn:ietf:bcp:47",
+                  "code": "en-US",
+                  "display": "English (United States)"
+                }
+              ],
+              "text": "English"
+            },
+            "preferred": true
+          }
+        ],
+        "generalPractitioner": [
+          {
+            "reference": "urn:uuid:b2000000-0000-4000-8000-000000000002",
+            "display": "Dr. Marcus Webb"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "Patient",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/mrn|JUN-0002"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:b2000000-0000-4000-8000-000000000002",
+      "resource": {
+        "resourceType": "Practitioner",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "pcp-marcus-webb"
+          }
+        ],
+        "active": true,
+        "name": [
+          {
+            "use": "official",
+            "family": "Webb",
+            "given": ["Marcus"],
+            "prefix": ["Dr."],
+            "suffix": ["MD"]
+          }
+        ],
+        "telecom": [
+          {
+            "system": "phone",
+            "value": "+1-410-555-0111",
+            "use": "work"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "Practitioner",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|pcp-marcus-webb"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:b2000000-0000-4000-8000-000000000003",
+      "resource": {
+        "resourceType": "RelatedPerson",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "nakamura-caregiver-kenji"
+          }
+        ],
+        "active": true,
+        "patient": {
+          "reference": "urn:uuid:b2000000-0000-4000-8000-000000000001",
+          "display": "Harold Nakamura"
+        },
+        "relationship": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/v3-RoleCode",
+                "code": "SONC",
+                "display": "son"
+              }
+            ],
+            "text": "Son"
+          }
+        ],
+        "name": [
+          {
+            "use": "official",
+            "family": "Nakamura",
+            "given": ["Kenji"]
+          }
+        ],
+        "telecom": [
+          {
+            "system": "phone",
+            "value": "+1-410-555-0129",
+            "use": "mobile"
+          },
+          {
+            "system": "email",
+            "value": "kenji.nakamura@example.com"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "RelatedPerson",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|nakamura-caregiver-kenji"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:b2000000-0000-4000-8000-000000000004",
+      "resource": {
+        "resourceType": "CareTeam",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "nakamura-care-team"
+          }
+        ],
+        "status": "active",
+        "name": "Harold Nakamura care team",
+        "subject": {
+          "reference": "urn:uuid:b2000000-0000-4000-8000-000000000001",
+          "display": "Harold Nakamura"
+        },
+        "period": {
+          "start": "2026-07-01"
+        },
+        "participant": [
+          {
+            "role": [
+              {
+                "coding": [
+                  {
+                    "system": "http://snomed.info/sct",
+                    "code": "133932002",
+                    "display": "Caregiver"
+                  }
+                ]
+              }
+            ],
+            "member": {
+              "reference": "urn:uuid:b2000000-0000-4000-8000-000000000003",
+              "display": "Kenji Nakamura (son)"
+            }
+          },
+          {
+            "role": [
+              {
+                "coding": [
+                  {
+                    "system": "http://snomed.info/sct",
+                    "code": "446050000",
+                    "display": "Primary care physician"
+                  }
+                ]
+              }
+            ],
+            "member": {
+              "reference": "urn:uuid:b2000000-0000-4000-8000-000000000002",
+              "display": "Dr. Marcus Webb"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "CareTeam",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|nakamura-care-team"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:b2000000-0000-4000-8000-000000000005",
+      "resource": {
+        "resourceType": "Consent",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "nakamura-consent"
+          }
+        ],
+        "status": "active",
+        "scope": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/consentscope",
+              "code": "patient-privacy",
+              "display": "Privacy Consent"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://loinc.org",
+                "code": "59284-0",
+                "display": "Patient Consent"
+              }
+            ]
+          }
+        ],
+        "patient": {
+          "reference": "urn:uuid:b2000000-0000-4000-8000-000000000001",
+          "display": "Harold Nakamura"
+        },
+        "dateTime": "2026-07-01T11:00:00-04:00",
+        "performer": [
+          {
+            "reference": "urn:uuid:b2000000-0000-4000-8000-000000000001",
+            "display": "Harold Nakamura"
+          }
+        ],
+        "policy": [
+          {
+            "uri": "https://juniper.health/policies/ai-companion-consent/v1"
+          }
+        ],
+        "provision": {
+          "provision": [
+            {
+              "type": "permit",
+              "code": [
+                {
+                  "coding": [
+                    {
+                      "system": "https://juniper.health/fhir/CodeSystem/consent-provision",
+                      "code": "ai-calling",
+                      "display": "Consent to recurring AI check-in calls"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "permit",
+              "code": [
+                {
+                  "coding": [
+                    {
+                      "system": "https://juniper.health/fhir/CodeSystem/consent-provision",
+                      "code": "call-recording",
+                      "display": "Consent to call recording and transcription"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "request": {
+        "method": "POST",
+        "url": "Consent",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|nakamura-consent"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:b2000000-0000-4000-8000-000000000006",
+      "resource": {
+        "resourceType": "Condition",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "nakamura-condition-copd"
+          }
+        ],
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                "code": "problem-list-item",
+                "display": "Problem List Item"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "13645005",
+              "display": "Chronic obstructive lung disease"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:b2000000-0000-4000-8000-000000000001"
+        },
+        "onsetDateTime": "2018"
+      },
+      "request": {
+        "method": "POST",
+        "url": "Condition",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|nakamura-condition-copd"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:b2000000-0000-4000-8000-000000000007",
+      "resource": {
+        "resourceType": "Condition",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "nakamura-condition-hypertension"
+          }
+        ],
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                "code": "problem-list-item",
+                "display": "Problem List Item"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "38341003",
+              "display": "Hypertension"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:b2000000-0000-4000-8000-000000000001"
+        },
+        "onsetDateTime": "2015"
+      },
+      "request": {
+        "method": "POST",
+        "url": "Condition",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|nakamura-condition-hypertension"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:b2000000-0000-4000-8000-000000000008",
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "nakamura-rx-amlodipine"
+          }
+        ],
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "197361",
+              "display": "amlodipine 5 MG Oral Tablet"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:b2000000-0000-4000-8000-000000000001"
+        },
+        "authoredOn": "2026-07-01",
+        "requester": {
+          "reference": "urn:uuid:b2000000-0000-4000-8000-000000000002",
+          "display": "Dr. Marcus Webb"
+        },
+        "reasonReference": [
+          {
+            "reference": "urn:uuid:b2000000-0000-4000-8000-000000000007",
+            "display": "Hypertension"
+          }
+        ],
+        "dosageInstruction": [
+          {
+            "text": "One tablet by mouth daily"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "url": "MedicationRequest",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|nakamura-rx-amlodipine"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:b2000000-0000-4000-8000-000000000009",
+      "resource": {
+        "resourceType": "Observation",
+        "identifier": [
+          {
+            "system": "https://juniper.health/fhir/identifier/seed",
+            "value": "nakamura-weight-2026-07-20"
+          }
+        ],
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "vital-signs",
+                "display": "Vital Signs"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "29463-7",
+              "display": "Body weight"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "urn:uuid:b2000000-0000-4000-8000-000000000001"
+        },
+        "effectiveDateTime": "2026-07-20T11:30:00-04:00",
+        "valueQuantity": {
+          "value": 81.6,
+          "unit": "kg",
+          "system": "http://unitsofmeasure.org",
+          "code": "kg"
+        }
+      },
+      "request": {
+        "method": "POST",
+        "url": "Observation",
+        "ifNoneExist": "identifier=https://juniper.health/fhir/identifier/seed|nakamura-weight-2026-07-20"
+      }
+    }
+  ]
+}

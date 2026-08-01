@@ -1,0 +1,343 @@
+"""FastAPI app factory — Twilio plumbing, Deepgram bridge, preferences API.
+
+Surfaces:
+- ``POST /twilio/voice`` — Twilio voice webhook returning TwiML
+  ``<Connect><Stream>`` pointed at our ``/media`` WebSocket.
+- ``WS /media`` — one persistent audio task per call bridging Twilio media
+  frames <-> a Deepgram Voice Agent WebSocket session whose ``think`` stage
+  calls back into this same service over HTTP (llm_endpoint.py).
+- ``GET/PUT /patients/{patientId}/preferences`` — docs/CONTRACTS.md §1.
+- ``POST /v1/chat/completions`` — mounted from llm_endpoint.py.
+- ``GET /healthz``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import hashlib
+import hmac
+import json
+import logging
+from typing import Any, Mapping
+
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, Response
+
+from . import llm_endpoint
+from .config import Settings
+from .context_brain import ContextBrain
+from .controller import ConversationController, Phase
+from .documentation import run_post_call
+from .escalation import EscalationSink
+from .llm.provider import AnthropicProvider, LLMProvider
+from .llm_endpoint import require_bearer
+from .medplum import MedplumClient, compile_ehr_brief
+from .preferences import Preferences, PreferencesStore
+from .session import CallRegistry
+from .terminology import Terminology, get_terminology
+
+logger = logging.getLogger("juniper.app")
+
+DEEPGRAM_AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse"
+
+
+# ---------------------------------------------------------------------------
+# Twilio signature validation (hand-rolled HMAC-SHA1; avoids the twilio pkg)
+# ---------------------------------------------------------------------------
+
+def validate_twilio_signature(
+    url: str, params: Mapping[str, str], signature: str, auth_token: str
+) -> bool:
+    payload = url + "".join(key + params[key] for key in sorted(params))
+    digest = hmac.new(
+        auth_token.encode("utf-8"), payload.encode("utf-8"), hashlib.sha1
+    ).digest()
+    expected = base64.b64encode(digest).decode("ascii")
+    return hmac.compare_digest(expected, signature)
+
+
+# ---------------------------------------------------------------------------
+# Deepgram Voice Agent settings (docs/DEEPGRAM_INTEGRATION.md)
+# ---------------------------------------------------------------------------
+
+def build_deepgram_settings(settings: Settings, call_id: str) -> dict[str, Any]:
+    headers = {}
+    if settings.api_token:
+        headers["authorization"] = f"Bearer {settings.api_token}"
+    return {
+        "type": "Settings",
+        "audio": {
+            "input": {"encoding": "mulaw", "sample_rate": 8000},
+            "output": {"encoding": "mulaw", "sample_rate": 8000, "container": "none"},
+        },
+        "agent": {
+            "listen": {
+                "provider": {"type": "deepgram", "model": settings.deepgram_listen_model}
+            },
+            "think": {
+                # "open_ai" designates any OpenAI-compatible endpoint — our
+                # FastAPI service is the gateway; the model name is cosmetic.
+                "provider": {"type": "open_ai", "model": "juniper-companion", "temperature": 0.7},
+                "endpoint": {
+                    "url": f"https://{settings.public_host}/v1/chat/completions?call={call_id}",
+                    "headers": headers,
+                },
+            },
+            "speak": {
+                "provider": {"type": "deepgram", "model": settings.deepgram_speak_model}
+            },
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# App factory
+# ---------------------------------------------------------------------------
+
+def create_app(
+    *,
+    settings: Settings | None = None,
+    provider: LLMProvider | None = None,
+    medplum: Any | None = None,
+    registry: CallRegistry | None = None,
+    preferences: PreferencesStore | None = None,
+    context_brain: ContextBrain | None = None,
+    terminology: Terminology | None = None,
+    escalation_notifier: Any | None = None,
+) -> FastAPI:
+    settings = settings or Settings.from_env()
+    provider = provider or AnthropicProvider(api_key=settings.anthropic_api_key)
+    if medplum is None and settings.medplum_base_url:
+        medplum = MedplumClient(
+            settings.medplum_base_url,
+            settings.medplum_client_id or "",
+            settings.medplum_client_secret or "",
+        )
+    preferences = preferences or PreferencesStore(settings.preferences_path)
+    context_brain = context_brain or ContextBrain(
+        settings.context_brain_path, preferences=preferences
+    )
+    terminology = terminology or get_terminology()
+    registry = registry or CallRegistry()
+
+    app = FastAPI(title="juniper-voice")
+    app.state.settings = settings
+    app.state.provider = provider
+    app.state.medplum = medplum
+    app.state.registry = registry
+    app.state.preferences = preferences
+    app.state.context_brain = context_brain
+    app.state.terminology = terminology
+    app.state.post_call_tasks = set()
+
+    app.include_router(llm_endpoint.router)
+
+    # -- health ------------------------------------------------------------
+    @app.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    # -- preferences API (docs/CONTRACTS.md §1) ------------------------------
+    @app.get("/patients/{patient_id}/preferences")
+    async def get_preferences(patient_id: str, request: Request):
+        require_bearer(request, settings.api_token)
+        return JSONResponse(preferences.get(patient_id).model_dump(exclude_none=True))
+
+    @app.put("/patients/{patient_id}/preferences")
+    async def put_preferences(patient_id: str, request: Request):
+        require_bearer(request, settings.api_token)
+        body = await request.json()
+        try:
+            stored = preferences.put(patient_id, Preferences.model_validate(body))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        return JSONResponse(stored.model_dump(exclude_none=True))
+
+    # -- call preparation ----------------------------------------------------
+    async def prepare_call(call_id: str, patient_id: str) -> ConversationController:
+        """Pre-call: consent gate (refuses to dial without ai-calling AND
+        call-recording), then compile the EHR brief and Context Brain digest
+        ONCE — both are held for the whole conversation so no FHIR round trip
+        ever lands on the per-turn latency path."""
+        if medplum is None:
+            raise RuntimeError("Medplum is not configured; cannot prepare a call")
+        brief = await compile_ehr_brief(
+            medplum,
+            patient_id,
+            terminology,
+            token_budget=settings.ehr_brief_token_budget,
+        )
+        controller = ConversationController(
+            call_id=call_id,
+            patient_id=patient_id,
+            provider=provider,
+            roster=settings.roster,
+            terminology=terminology,
+            brief=brief,
+            digest=context_brain.digest(patient_id),
+            negative_constraints=context_brain.negative_constraints(patient_id),
+            preferences=preferences,
+            escalation=EscalationSink(notifier=escalation_notifier),
+        )
+        registry.register(call_id, controller)
+        return controller
+
+    app.state.prepare_call = prepare_call
+
+    async def finish_call(call_id: str) -> None:
+        controller = registry.pop(call_id)
+        if controller is None:
+            return
+        try:
+            await run_post_call(
+                controller=controller,
+                provider=provider,
+                roster=settings.roster,
+                medplum=medplum,
+                terminology=terminology,
+                device_ref=settings.device_ref,
+                organization_ref=settings.organization_ref,
+                context_brain=context_brain,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("post-call pass failed for %s", call_id)
+
+    app.state.finish_call = finish_call
+
+    def _spawn_post_call(call_id: str) -> None:
+        task = asyncio.create_task(finish_call(call_id), name=f"post_call:{call_id}")
+        app.state.post_call_tasks.add(task)
+        task.add_done_callback(app.state.post_call_tasks.discard)
+
+    # -- Twilio voice webhook ------------------------------------------------
+    @app.post("/twilio/voice")
+    async def twilio_voice(request: Request):
+        form = await request.form()
+        params = {key: str(value) for key, value in form.items()}
+        if settings.twilio_auth_token:
+            signature = request.headers.get("x-twilio-signature", "")
+            if not validate_twilio_signature(
+                str(request.url), params, signature, settings.twilio_auth_token
+            ):
+                raise HTTPException(status_code=403, detail="bad Twilio signature")
+        call_sid = params.get("CallSid", "unknown-call")
+        patient_id = request.query_params.get("patientId")
+        if patient_id and registry.get(call_sid) is None:
+            try:
+                await prepare_call(call_sid, patient_id)
+            except Exception:  # noqa: BLE001 - includes ConsentError
+                logger.exception("pre-call preparation refused/failed for %s", call_sid)
+                return Response(
+                    content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+                    media_type="application/xml",
+                )
+        stream_url = f"wss://{settings.public_host}/media?call={call_sid}"
+        twiml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<Response><Connect><Stream url="{stream_url}"/></Connect></Response>'
+        )
+        return Response(content=twiml, media_type="application/xml")
+
+    # -- Twilio <-> Deepgram media bridge ------------------------------------
+    @app.websocket("/media")
+    async def media(websocket: WebSocket):
+        await websocket.accept()
+        call_id = websocket.query_params.get("call", "unknown-call")
+        try:
+            import websockets as ws_client
+        except ImportError:  # pragma: no cover
+            await websocket.close(code=1011)
+            return
+        if not settings.deepgram_api_key:
+            logger.error("DEEPGRAM_API_KEY not configured; closing media socket")
+            await websocket.close(code=1011)
+            return
+
+        stream_sid: str | None = None
+        try:
+            async with ws_client.connect(
+                DEEPGRAM_AGENT_URL,
+                additional_headers={"Authorization": f"Token {settings.deepgram_api_key}"},
+            ) as deepgram:
+                await deepgram.send(json.dumps(build_deepgram_settings(settings, call_id)))
+
+                async def pump_twilio_to_deepgram() -> None:
+                    nonlocal stream_sid
+                    while True:
+                        raw = await websocket.receive_text()
+                        message = json.loads(raw)
+                        event = message.get("event")
+                        if event == "start":
+                            stream_sid = message["start"]["streamSid"]
+                        elif event == "media":
+                            audio = base64.b64decode(message["media"]["payload"])
+                            await deepgram.send(audio)
+                        elif event == "stop":
+                            return
+
+                async def pump_deepgram_to_twilio() -> None:
+                    async for frame in deepgram:
+                        if isinstance(frame, bytes):
+                            if stream_sid is None:
+                                continue
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "media",
+                                        "streamSid": stream_sid,
+                                        "media": {
+                                            "payload": base64.b64encode(frame).decode("ascii")
+                                        },
+                                    }
+                                )
+                            )
+                            continue
+                        try:
+                            event = json.loads(frame)
+                        except (TypeError, json.JSONDecodeError):
+                            continue
+                        event_type = event.get("type")
+                        if event_type == "UserStartedSpeaking" and stream_sid is not None:
+                            # Barge-in: flush Twilio's audio buffer immediately.
+                            await websocket.send_text(
+                                json.dumps({"event": "clear", "streamSid": stream_sid})
+                            )
+                        elif event_type == "Error":
+                            logger.error("Deepgram agent error: %s", event)
+
+                pumps = [
+                    asyncio.create_task(pump_twilio_to_deepgram()),
+                    asyncio.create_task(pump_deepgram_to_twilio()),
+                ]
+                try:
+                    done, pending = await asyncio.wait(
+                        pumps, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for task in pending:
+                        task.cancel()
+                    for task in done:
+                        exc = task.exception()
+                        if exc is not None and not isinstance(exc, WebSocketDisconnect):
+                            raise exc
+                finally:
+                    for task in pumps:
+                        if not task.done():
+                            task.cancel()
+        except WebSocketDisconnect:
+            pass
+        except Exception:  # noqa: BLE001
+            logger.exception("media bridge failed for %s", call_id)
+        finally:
+            controller = registry.get(call_id)
+            if controller is not None:
+                controller.phase = Phase.DONE
+            # The patient never waits on note generation: the post-call pass
+            # runs asynchronously after hangup.
+            _spawn_post_call(call_id)
+            try:
+                await websocket.close()
+            except RuntimeError:
+                pass
+
+    return app

@@ -1,0 +1,29 @@
+{
+  "resourceType": "CodeSystem",
+  "url": "https://juniper.health/fhir/CodeSystem/fourm-domain",
+  "name": "JuniperFourmDomain",
+  "title": "4Ms of Age-Friendly Care",
+  "status": "active",
+  "publisher": "Juniper Health",
+  "caseSensitive": true,
+  "content": "complete",
+  "count": 4,
+  "concept": [
+    {
+      "code": "what-matters",
+      "display": "What Matters"
+    },
+    {
+      "code": "medication",
+      "display": "Medication"
+    },
+    {
+      "code": "mentation",
+      "display": "Mentation"
+    },
+    {
+      "code": "mobility",
+      "display": "Mobility"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "resourceType": "CodeSystem",
+  "url": "https://juniper.health/fhir/CodeSystem/task-category",
+  "name": "JuniperTaskCategory",
+  "title": "Juniper Task Categories",
+  "status": "active",
+  "publisher": "Juniper Health",
+  "caseSensitive": true,
+  "content": "complete",
+  "count": 1,
+  "concept": [
+    {
+      "code": "juniper-escalation",
+      "display": "Juniper Urgent Escalation"
+    }
+  ]
+}

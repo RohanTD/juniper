@@ -1,0 +1,25 @@
+{
+  "resourceType": "CodeSystem",
+  "url": "https://juniper.health/fhir/CodeSystem/note-category",
+  "name": "JuniperNoteCategory",
+  "title": "Juniper Note Categories",
+  "status": "active",
+  "publisher": "Juniper Health",
+  "caseSensitive": true,
+  "content": "complete",
+  "count": 3,
+  "concept": [
+    {
+      "code": "juniper-note",
+      "display": "Juniper Notes"
+    },
+    {
+      "code": "juniper-transcript",
+      "display": "Juniper Conversation Transcripts"
+    },
+    {
+      "code": "juniper-family-summary",
+      "display": "Juniper Family Summaries"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "rambler",
+  "description": "Patient rambles at length; a clinically relevant dizziness finding is buried mid-ramble.",
+  "turns": [
+    {"speaker": "companion", "text": "Good morning, Edie! It's June from Juniper. Just a reminder this call is recorded — is now still a good time for our visit?"},
+    {"speaker": "patient", "text": "Oh yes, of course dear, come in, come in — well not in, you know what I mean. I was just watering the ferns."},
+    {"speaker": "companion", "text": "Ferns are lucky to have you. How has the week been treating you?"},
+    {"speaker": "patient", "text": "Well let me tell you, it started with the church bake sale, and Doris — you remember Doris — she brought that lemon cake again, and then my nephew called from Tucson, he's got a new truck, and the weather has been something else, and oh, when I got up to answer the phone I went all dizzy for a moment, the room just spun, anyway the truck is red, can you imagine, red at his age."},
+    {"speaker": "companion", "text": "A red truck at his age — that did make me smile. You mentioned the room spinning when you stood up. Does that happen often?"},
+    {"speaker": "patient", "text": "Oh, only most mornings I suppose, it passes if I hold the counter. Now where was I — the bake sale raised four hundred dollars, and Pastor Mike said..."},
+    {"speaker": "companion", "text": "Four hundred dollars, that's wonderful. I want to make sure I heard you — most mornings you feel dizzy when you stand, and you steady yourself on the counter?"},
+    {"speaker": "patient", "text": "That's right, just a little spin, it's nothing. My mother had the same thing. Anyway, are you coming to the potluck? Oh no, of course, you're a telephone."},
+    {"speaker": "companion", "text": "I'll be there in spirit, Edie. Are you still taking the metformin with breakfast and dinner the way Dr. Patel wanted?"},
+    {"speaker": "patient", "text": "Every day with my eggs, and the evening one with the news. I never miss, my pillbox has the days on it."},
+    {"speaker": "companion", "text": "That pillbox is doing good work. I'll let you get back to the ferns — I'll check on that morning dizziness next time, and do mention it if it gets worse. Bye for now, Edie."},
+    {"speaker": "patient", "text": "Bye bye dear, tell the other telephones I said hello."}
+  ],
+  "planted_findings": [
+    {"evidence": "I went all dizzy for a moment", "note_text": "Patient reports dizziness on standing"},
+    {"evidence": "only most mornings I suppose", "note_text": "occurring most mornings, steadies herself on the counter"},
+    {"evidence": "Every day with my eggs", "note_text": "Metformin adherence reported: taking morning and evening doses daily"}
+  ]
+}

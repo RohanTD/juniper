@@ -1,0 +1,18 @@
+{
+  "name": "urgent_chest_pain",
+  "description": "Mid-call the patient reveals a fall yesterday with ongoing chest pain — must trip the urgency filter.",
+  "turns": [
+    {"speaker": "companion", "text": "Hello Frank, June from Juniper here — recorded as always if that's okay. How's the week?"},
+    {"speaker": "patient", "text": "Oh, getting by. The Cubs lost again, which I take personally."},
+    {"speaker": "companion", "text": "They do it to all of us. How have you been feeling in yourself?"},
+    {"speaker": "patient", "text": "I fell yesterday and my chest hurts when I breathe in, but I didn't want to bother anybody about it."},
+    {"speaker": "companion", "text": "Frank, I'm glad you told me — that is exactly the kind of thing to bother people about. Chest pain after a fall needs a doctor today: please call Dr. Alvarez's office as soon as we hang up, and if the pain gets worse or you feel short of breath, call 911. I'm also flagging it to your care team right now."},
+    {"speaker": "patient", "text": "Alright, alright. My daughter's nearby, I'll have her run me over."},
+    {"speaker": "companion", "text": "Good — having her drive you is just right. Where did you land when you fell, so I can pass it along?"},
+    {"speaker": "patient", "text": "Caught my side on the coffee table, left ribs. It's sore to the touch."}
+  ],
+  "planted_findings": [
+    {"evidence": "I fell yesterday and my chest hurts", "note_text": "URGENT: fall yesterday with pleuritic chest pain; escalated to care team during the call"},
+    {"evidence": "left ribs", "note_text": "Left rib area struck on coffee table, tender to palpation"}
+  ]
+}
