@@ -1,0 +1,84 @@
+{
+  "$comment": "Single source of truth for every Juniper code, CodeSystem URL and category slug. Consumed by the Python voice service (services/voice/terminology.py), the TS apps (@juniper/terminology), and the Medplum project config (medplum/). Nothing anywhere hardcodes a code string.",
+  "codeSystems": {
+    "noteCategory": {
+      "url": "https://juniper.health/fhir/CodeSystem/note-category",
+      "title": "Juniper Note Categories",
+      "codes": {
+        "note": { "code": "juniper-note", "display": "Juniper Notes" },
+        "transcript": { "code": "juniper-transcript", "display": "Juniper Conversation Transcripts" },
+        "familySummary": { "code": "juniper-family-summary", "display": "Juniper Family Summaries" }
+      }
+    },
+    "fourMDomain": {
+      "url": "https://juniper.health/fhir/CodeSystem/fourm-domain",
+      "title": "4Ms of Age-Friendly Care",
+      "codes": {
+        "whatMatters": { "code": "what-matters", "display": "What Matters" },
+        "medication": { "code": "medication", "display": "Medication" },
+        "mentation": { "code": "mentation", "display": "Mentation" },
+        "mobility": { "code": "mobility", "display": "Mobility" }
+      }
+    },
+    "taskCategory": {
+      "url": "https://juniper.health/fhir/CodeSystem/task-category",
+      "title": "Juniper Task Categories",
+      "codes": {
+        "escalation": { "code": "juniper-escalation", "display": "Juniper Urgent Escalation" }
+      }
+    },
+    "consentProvision": {
+      "url": "https://juniper.health/fhir/CodeSystem/consent-provision",
+      "title": "Juniper Consent Provisions",
+      "$comment": "Three separate provisions because they are genuinely separate claims: agreeing to be called is not agreeing to be recorded, and neither is agreeing that family reads the summaries.",
+      "codes": {
+        "aiCalling": { "code": "ai-calling", "display": "Consent to recurring AI check-in calls" },
+        "recording": { "code": "call-recording", "display": "Consent to call recording and transcription" },
+        "familySharing": { "code": "family-sharing", "display": "Consent to share summaries with family caregivers" }
+      }
+    },
+    "encounterReason": {
+      "url": "https://juniper.health/fhir/CodeSystem/encounter-reason",
+      "title": "Juniper Encounter Reasons",
+      "codes": {
+        "fourMCheckIn": { "code": "juniper-4m-checkin", "display": "Juniper 4M check-in call" }
+      }
+    }
+  },
+  "external": {
+    "noteType": {
+      "system": "http://loinc.org",
+      "code": "34748-4",
+      "display": "Telephone encounter Note",
+      "$comment": "Verified against the NLM LOINC API 2026-08-01 (the Medplum project carries only a LOINC stub, so its $lookup cannot verify). Specialty/nurse telephone-note variants exist (75499-4 triage, 103806-6 oncology, ...); 34748-4 is the profession-neutral choice and correct for an AI author."
+    },
+    "encounterClass": {
+      "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+      "code": "VR",
+      "display": "virtual"
+    },
+    "consentScope": {
+      "system": "http://terminology.hl7.org/CodeSystem/consentscope",
+      "code": "patient-privacy",
+      "display": "Privacy Consent"
+    },
+    "consentPolicy": {
+      "uri": "https://juniper.health/policies/ai-companion-consent/v1"
+    }
+  },
+  "identifiers": {
+    "device": {
+      "system": "https://juniper.health/fhir/identifier/device",
+      "value": "juniper-voice-agent"
+    },
+    "organization": {
+      "system": "https://juniper.health/fhir/identifier/organization",
+      "value": "juniper-pilot-clinic"
+    }
+  },
+  "documents": {
+    "relatesToTranscript": "transforms",
+    "docStatus": { "initial": "preliminary", "reviewed": "final" },
+    "contentType": "text/plain"
+  }
+}
