@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { nextStepPath, subjectWord, useOnboarding } from '../../src/state';
+import { nextStepPath, voiceFor, useOnboarding } from '../../src/state';
 import { PrimaryButton, SecondaryButton } from '../../src/ui/Buttons';
 import { Screen } from '../../src/ui/Screen';
 import { StepHeader } from '../../src/ui/StepHeader';
@@ -9,7 +9,7 @@ import { TextField } from '../../src/ui/TextField';
 export default function PreferredNameStep() {
   const { answers, update, completeStep } = useOnboarding();
   const [name, setName] = useState(answers.preferredName ?? '');
-  const you = subjectWord(answers);
+  const v = voiceFor(answers);
   const nextPath = nextStepPath('/steps/preferred-name') as string;
 
   useEffect(() => {
@@ -20,7 +20,7 @@ export default function PreferredNameStep() {
     <Screen>
       <StepHeader
         step="/steps/preferred-name"
-        title={`What should Juniper call ${you === 'their' ? 'them' : 'you'}?`}
+        title={`What should Juniper call ${v.object}?`}
         hint="A first name or nickname makes the call feel like a friend, not a form."
       />
       <TextField label="Preferred name" value={name} onChangeText={setName} placeholder="For example: Peggy" />

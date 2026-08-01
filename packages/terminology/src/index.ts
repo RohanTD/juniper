@@ -33,6 +33,7 @@ export const NOTE_CATEGORY = {
   note: coding('noteCategory', 'note'),
   transcript: coding('noteCategory', 'transcript'),
   familySummary: coding('noteCategory', 'familySummary'),
+  familyGuidance: coding('noteCategory', 'familyGuidance'),
 } as const;
 
 /** 4M domain codings */

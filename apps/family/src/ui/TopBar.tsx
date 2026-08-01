@@ -54,9 +54,46 @@ export function TopBar() {
         borderBottomColor: theme.colors.rule,
       }}
     >
-      <ThemedText variant="label" color={theme.colors.text.accent}>
-        Juniper Family
-      </ThemedText>
+      {/* A mark, not a label.
+       *
+       * This was `variant="label"` — the tracked uppercase mono — which is
+       * exactly the recipe the hero eyebrow uses one line below it on the
+       * overview page. Two identical treatments forty pixels apart read as one
+       * repeated element rather than as chrome and content, and the eye has no
+       * way to tell which is the app and which is the page.
+       *
+       * A glyph badge plus a sans wordmark is a third typographic register,
+       * distinct from both the mono eyebrow and the serif display — and it
+       * keeps the rule this file already states: the serif signature stays
+       * reserved for the two hero moments and is not spent on a wordmark
+       * repeated on every screen. */}
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel="Juniper Family, go to overview"
+        onPress={() => router.push('/')}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: theme.spacing.sm,
+          minHeight: theme.touchTarget.minHeight,
+        }}
+      >
+        <View
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: theme.borderRadius.sm,
+            backgroundColor: theme.colors.primary[500],
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <ThemedText variant="button" color={theme.colors.text.inverse}>
+            J
+          </ThemedText>
+        </View>
+        <ThemedText variant="h4">Juniper Family</ThemedText>
+      </Pressable>
 
       <View
         style={{

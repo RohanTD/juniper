@@ -27,6 +27,15 @@ export interface AnswersDraft {
   language?: LanguageChoice;
   callWindows: CallWindow[];
   topicsToAvoid: string[];
+  /**
+   * What the patient enjoys — gardening, grandchildren, the Sunday crossword.
+   *
+   * The counterpart to `topicsToAvoid`, and the only answer in the flow that
+   * is not logistics or permission. It gives the Companion something real to
+   * open with, gives the What Matters domain a starting point instead of a
+   * cold open, and gives family guidance something specific to suggest.
+   */
+  interests: string[];
   familyContact?: OnboardingAnswers['familyContact'];
   consents: ConsentAnswers;
 }
@@ -35,6 +44,7 @@ export const initialDraft: AnswersDraft = {
   completedBy: { role: 'patient' },
   callWindows: [],
   topicsToAvoid: [],
+  interests: [],
   consents: { aiCalling: false, recording: false, familySharing: false },
 };
 
@@ -50,6 +60,10 @@ export const STEP_ORDER = [
   '/steps/preferred-name',
   '/steps/language',
   '/steps/call-times',
+  // Interests before topics-to-avoid: naming what you love is a warmer thing
+  // to be asked than naming what hurts, and it makes the harder question read
+  // as the natural other half rather than as an interrogation.
+  '/steps/interests',
   '/steps/topics',
   '/steps/family-contact',
   '/steps/consent-calling',
@@ -79,9 +93,81 @@ export function stepFraction(current: StepPath): number {
   return Math.max(0, Math.min(1, index / total));
 }
 
-/** "your" for a patient filling it in, "their" for a proxy. */
+/**
+ * Who the form is talking to, and therefore how it must refer to the patient.
+ *
+ * Two people fill this in and the copy has to hold up for both: the patient
+ * ("what is **your** date of birth?") and a proxy ("what is **their** date of
+ * birth?"). Getting it wrong is not cosmetic — asking an eighty-year-old about
+ * "the patient" reads as if the form has forgotten who it is speaking to, and
+ * telling a daughter "it calls at the times **you** chose" about her mother is
+ * plainly incorrect.
+ *
+ * This used to be a single `subjectWord` returning 'your' | 'their', which
+ * covered possessives and nothing else — so screens needing a subject or an
+ * object pronoun open-coded `you === 'their' ? 'them' : 'you'` at the call
+ * site, and the consent screens, which needed whole sentences, simply
+ * hardcoded second person and were wrong for every proxy.
+ *
+ * A note on `they`: singular *they* takes plural agreement, exactly like
+ * *you* — "you answer" / "they answer". So no screen needs verb-form
+ * branching, which is why there is none here.
+ */
+export interface Voice {
+  /** "you" / "they" — sentence subject. */
+  subject: string;
+  /** "you" / "them" — sentence object. */
+  object: string;
+  /** "your" / "their" — possessive determiner. */
+  possessive: string;
+  /** "yours" / "theirs". */
+  possessivePronoun: string;
+  /** "yourself" / "themselves". */
+  reflexive: string;
+  /** True when the patient is filling the form in about themselves. */
+  isPatient: boolean;
+  /**
+   * A noun for the patient, when a pronoun would be ambiguous —
+   * "you" / "the person you're helping". Use sparingly; a pronoun is warmer.
+   */
+  noun: string;
+  /** Capitalise the first letter, for sentence-initial use. */
+  cap: (word: string) => string;
+}
+
+const PATIENT_VOICE: Voice = {
+  subject: 'you',
+  object: 'you',
+  possessive: 'your',
+  possessivePronoun: 'yours',
+  reflexive: 'yourself',
+  isPatient: true,
+  noun: 'you',
+  cap,
+};
+
+const PROXY_VOICE: Voice = {
+  subject: 'they',
+  object: 'them',
+  possessive: 'their',
+  possessivePronoun: 'theirs',
+  reflexive: 'themselves',
+  isPatient: false,
+  noun: "the person you're helping",
+  cap,
+};
+
+function cap(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+export function voiceFor(answers: AnswersDraft): Voice {
+  return answers.completedBy.role === 'proxy' ? PROXY_VOICE : PATIENT_VOICE;
+}
+
+/** @deprecated Use {@link voiceFor}; kept so existing call sites keep working. */
 export function subjectWord(answers: AnswersDraft): 'your' | 'their' {
-  return answers.completedBy.role === 'proxy' ? 'their' : 'your';
+  return voiceFor(answers).possessive as 'your' | 'their';
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +311,7 @@ export function toSubmitAnswers(answers: AnswersDraft): OnboardingAnswers {
     language: answers.language as LanguageChoice,
     callWindows: answers.callWindows,
     topicsToAvoid: answers.topicsToAvoid,
+    interests: answers.interests,
     familyContact: familyContactForSubmit(answers),
     consents: answers.consents,
   };

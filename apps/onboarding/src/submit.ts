@@ -76,6 +76,7 @@ export interface OnboardingAnswers {
   language: LanguageChoice;
   callWindows: CallWindow[];
   topicsToAvoid: string[];
+  interests: string[];
   familyContact?: FamilyContact;
   consents: ConsentAnswers;
 }
@@ -277,6 +278,7 @@ export async function submitOnboarding(
   const preferences = await preferencesApi.putPreferences(patientId, {
     callWindows: answers.callWindows,
     topicsToAvoid: answers.topicsToAvoid,
+    interests: answers.interests,
     completedBy: answers.completedBy,
     enrollment: buildEnrollmentProfile(answers),
   });

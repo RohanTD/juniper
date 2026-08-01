@@ -7,7 +7,8 @@
       "codes": {
         "note": { "code": "juniper-note", "display": "Juniper Notes" },
         "transcript": { "code": "juniper-transcript", "display": "Juniper Conversation Transcripts" },
-        "familySummary": { "code": "juniper-family-summary", "display": "Juniper Family Summaries" }
+        "familySummary": { "code": "juniper-family-summary", "display": "Juniper Family Summaries" },
+        "familyGuidance": { "code": "juniper-family-guidance", "display": "Juniper Family Guidance" }
       }
     },
     "fourMDomain": {

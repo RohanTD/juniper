@@ -156,6 +156,10 @@ export default function ReviewStep() {
         }
       />
       <Row
+        label="Enjoys"
+        value={answers.interests.length > 0 ? answers.interests.join('; ') : 'Not said'}
+      />
+      <Row
         label="Topics to avoid"
         value={answers.topicsToAvoid.length > 0 ? answers.topicsToAvoid.join('; ') : 'None'}
       />

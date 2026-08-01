@@ -76,6 +76,10 @@ class Enrollment(BaseModel):
 class Preferences(BaseModel):
     callWindows: list[CallWindow] = Field(default_factory=list)
     topicsToAvoid: list[str] = Field(default_factory=list)
+    #: What the patient enjoys.  The counterpart to ``topicsToAvoid``: that
+    #: list is a prohibition the compassion filter enforces, this one is an
+    #: invitation the Companion opens with.
+    interests: list[str] = Field(default_factory=list)
     completedBy: CompletedBy | None = None
     enrollment: Enrollment | None = None
 

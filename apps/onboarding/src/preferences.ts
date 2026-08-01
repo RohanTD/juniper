@@ -48,6 +48,15 @@ export interface EnrollmentProfile {
 export interface PatientPreferences {
   callWindows: CallWindow[];
   topicsToAvoid: string[];
+  /**
+   * What the patient enjoys. The counterpart to `topicsToAvoid`: that list is
+   * a prohibition the compassion filter enforces, this one is an invitation
+   * the Companion opens with. Kept here rather than in FHIR for the same
+   * reason as the rest of this file — there is no FHIR home for "loves the
+   * Sunday crossword", and inventing one would put non-clinical state into the
+   * clinical record.
+   */
+  interests?: string[];
   completedBy: CompletedBy;
   enrollment?: EnrollmentProfile;
 }
@@ -69,17 +78,50 @@ export interface PreferencesClientOptions {
   token: string;
   /** Injectable for tests. */
   fetchImpl?: typeof fetch;
+  /** Override the request deadline; see REQUEST_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
+
+/**
+ * How long to wait before giving up on the voice service.
+ *
+ * `fetch` has no default timeout, and this call sits on the submit path — the
+ * last action of a thirteen-screen flow. A host that *refuses* a connection
+ * fails fast and shows an error; a host that swallows the packets (a laptop
+ * asleep, a VPN, a dev server on the wrong interface, a simulator that cannot
+ * see `localhost`) never resolves, and the button sits on "Saving…" forever.
+ * For an eighty-year-old finishing a form that is the worst possible outcome:
+ * no error, no retry, no way to tell whether it worked.
+ */
+export const REQUEST_TIMEOUT_MS = 15000;
 
 export class PreferencesClient {
   private readonly baseUrl: string;
   private readonly token: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(options: PreferencesClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.token = options.token;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  }
+
+  /** One fetch with a deadline. Status 0 means "no response at all". */
+  private async fetchWithTimeout(url: string, init: RequestInit, label: string): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      return await this.fetchImpl(url, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new PreferencesApiError(0, `${label} timed out after ${this.timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private url(patientId: string): string {
@@ -94,10 +136,11 @@ export class PreferencesClient {
   }
 
   async getPreferences(patientId: string): Promise<PatientPreferences> {
-    const response = await this.fetchImpl(this.url(patientId), {
-      method: 'GET',
-      headers: this.headers(),
-    });
+    const response = await this.fetchWithTimeout(
+      this.url(patientId),
+      { method: 'GET', headers: this.headers() },
+      'GET preferences'
+    );
     if (!response.ok) {
       throw new PreferencesApiError(response.status, `GET preferences failed: ${response.status}`);
     }
@@ -108,11 +151,11 @@ export class PreferencesClient {
     patientId: string,
     preferences: PatientPreferences
   ): Promise<PatientPreferences> {
-    const response = await this.fetchImpl(this.url(patientId), {
-      method: 'PUT',
-      headers: this.headers(),
-      body: JSON.stringify(preferences),
-    });
+    const response = await this.fetchWithTimeout(
+      this.url(patientId),
+      { method: 'PUT', headers: this.headers(), body: JSON.stringify(preferences) },
+      'PUT preferences'
+    );
     if (!response.ok) {
       throw new PreferencesApiError(response.status, `PUT preferences failed: ${response.status}`);
     }

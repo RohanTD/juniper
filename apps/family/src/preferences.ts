@@ -50,6 +50,15 @@ export interface EnrollmentProfile {
 export interface PatientPreferences {
   callWindows: CallWindow[];
   topicsToAvoid: string[];
+  /**
+   * What the patient enjoys. The counterpart to `topicsToAvoid`: that list is
+   * a prohibition the compassion filter enforces, this one is an invitation
+   * the Companion opens with. Kept here rather than in FHIR for the same
+   * reason as the rest of this file — there is no FHIR home for "loves the
+   * Sunday crossword", and inventing one would put non-clinical state into the
+   * clinical record.
+   */
+  interests?: string[];
   completedBy: CompletedBy;
   enrollment?: EnrollmentProfile;
 }

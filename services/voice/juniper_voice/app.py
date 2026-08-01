@@ -30,6 +30,7 @@ from typing import Any, Mapping
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from . import llm_endpoint
@@ -181,6 +182,23 @@ def create_app(
     # it that work runs inside the Twilio webhook — measured at ~6s of dead
     # air on a cold index, with the patient already on the line.
     app.state.warm_context: dict[str, tuple[Any, float]] = {}
+
+    # The family app is a web dashboard, so its reads and writes of the
+    # app-level stores are cross-origin and a browser drops them before they
+    # reach us unless we say otherwise. The symptom is a service that looks
+    # perfectly healthy while "call settings" never loads, because the request
+    # never arrived. Origins are an explicit allow-list, never "*" — see
+    # Settings.cors_origins.
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.cors_origins),
+            allow_methods=["GET", "PUT", "POST", "OPTIONS"],
+            allow_headers=["authorization", "content-type"],
+            # No cookies are used; entitlement rides on the bearer token, so
+            # credentialed requests are neither needed nor allowed.
+            allow_credentials=False,
+        )
 
     app.include_router(llm_endpoint.router)
 

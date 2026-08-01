@@ -7,7 +7,7 @@
   "publisher": "Juniper Health",
   "caseSensitive": true,
   "content": "complete",
-  "count": 3,
+  "count": 4,
   "concept": [
     {
       "code": "juniper-note",
@@ -20,6 +20,10 @@
     {
       "code": "juniper-family-summary",
       "display": "Juniper Family Summaries"
+    },
+    {
+      "code": "juniper-family-guidance",
+      "display": "Juniper Family Guidance"
     }
   ]
 }

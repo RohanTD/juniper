@@ -24,6 +24,7 @@ const baseAnswers: OnboardingAnswers = {
     { days: ['mon', 'tue', 'wed', 'thu', 'fri'], start: '09:00', end: '11:00', timezone: 'America/New_York' },
   ],
   topicsToAvoid: ['her late husband Robert'],
+  interests: ['Gardening', 'Grandchildren'],
   familyContact: { name: 'Anne Chen', relationship: 'daughter', phone: '555-777-1212' },
   consents: { aiCalling: true, recording: true, familySharing: false },
 };

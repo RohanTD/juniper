@@ -27,7 +27,22 @@ export interface VoiceApiOptions {
   token: string;
   /** Injectable for tests. */
   fetchImpl?: typeof fetch;
+  /** Override the request deadline; see REQUEST_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
+
+/**
+ * How long to wait before giving up on the voice service.
+ *
+ * `fetch` has no default timeout. A host that *refuses* a connection fails
+ * fast and reads as an error; a host that simply swallows the packets — a
+ * laptop asleep, a VPN, a dev server bound to the wrong interface, an emulator
+ * that cannot see `localhost` — never resolves at all. The screen then sits on
+ * "Loading…" or "Saving…" indefinitely, which is the worst of the three
+ * outcomes: the user cannot retry, cannot tell it has failed, and has no
+ * reason to think anything is wrong.
+ */
+export const REQUEST_TIMEOUT_MS = 15000;
 
 /**
  * Plain-language reason a load or save failed. A caregiver should never see an
@@ -38,6 +53,7 @@ export function describeVoiceApiError(error: unknown): string {
     if (error.status === 401) return 'your session has expired — please sign in again';
     if (error.status === 403) return 'this account is not allowed to change these settings';
     if (error.status === 503) return 'we could not verify your access just now';
+    if (error.status === 0) return 'the Juniper service did not respond in time';
     return `the service returned an error (${error.status})`;
   }
   return 'we could not reach the Juniper service';
@@ -48,11 +64,13 @@ export abstract class VoiceApiClient {
   protected readonly baseUrl: string;
   protected readonly token: string;
   protected readonly fetchImpl: typeof fetch;
+  protected readonly timeoutMs: number;
 
   constructor(options: VoiceApiOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.token = options.token;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   }
 
   protected patientUrl(patientId: string, suffix: string): string {
@@ -67,7 +85,26 @@ export abstract class VoiceApiClient {
   }
 
   protected async request<T>(url: string, init: RequestInit, label: string): Promise<T> {
-    const response = await this.fetchImpl(url, { ...init, headers: this.headers() });
+    // Status 0 is not a real HTTP status; it is this client's way of saying
+    // "no response at all", so callers can distinguish a service that said no
+    // from a service that never spoke.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        ...init,
+        headers: this.headers(),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new VoiceApiError(0, `${label} timed out after ${this.timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!response.ok) {
       throw new VoiceApiError(response.status, `${label} failed: ${response.status}`);
     }
