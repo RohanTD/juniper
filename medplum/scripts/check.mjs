@@ -276,23 +276,42 @@ const EXPECTED_READONLY = [
 section('7. Caregiver AccessPolicy scoping');
 const caregiverPolicy = files.get(join(RESOURCES_DIR, 'access-policy-caregiver.json'));
 {
-  const ALLOWED_TYPES = new Set(['Patient', 'RelatedPerson', 'Encounter', 'Task', 'DocumentReference']);
+  // Binary is the one entry that legitimately carries NO criteria. Medplum
+  // cannot filter Binary by search criteria at all; it scopes Binary by
+  // securityContext inheritance — a Binary is readable only if the caller can
+  // read the resource its securityContext points at. Every Binary the voice
+  // service writes carries securityContext -> its owning DocumentReference
+  // (enforced by test_write_contract.py), so the caregiver reads
+  // family-summary binaries and is denied note/transcript binaries.
+  //
+  // This check previously asserted the OPPOSITE ("must not grant Binary —
+  // transcript binaries would be one ID guess away"). Verified live
+  // 2026-08-01 and that assumption was wrong in both directions: without the
+  // grant Medplum hands the caregiver a bare "Binary/<id>" instead of a
+  // presigned URL and the family app cannot read summary text at all (403);
+  // with it, a direct read of the clinical note's Binary still returns 404.
+  const CRITERIA_TYPES = new Set(['Patient', 'RelatedPerson', 'Encounter', 'Task', 'DocumentReference']);
+  const ALLOWED_TYPES = new Set([...CRITERIA_TYPES, 'Binary']);
   const seenTypes = new Set();
   for (const entry of caregiverPolicy?.resource ?? []) {
     seenTypes.add(entry.resourceType);
     if (entry.readonly !== true) fail(`caregiver policy: ${entry.resourceType} entry is not readonly`);
     if (!ALLOWED_TYPES.has(entry.resourceType)) fail(`caregiver policy: unexpected resourceType ${entry.resourceType}`);
+    if (entry.resourceType === 'Binary') continue; // scoped by securityContext, not criteria
     if (!entry.criteria) {
       fail(`caregiver policy: ${entry.resourceType} entry has no criteria (would be project-wide)`);
     } else if (!entry.criteria.includes('%patient') && !entry.criteria.includes('%profile')) {
       fail(`caregiver policy: ${entry.resourceType} criteria not parameterized: ${entry.criteria}`);
     }
   }
-  for (const t of ALLOWED_TYPES) {
+  for (const t of CRITERIA_TYPES) {
     if (!seenTypes.has(t)) fail(`caregiver policy: missing ${t} entry`);
   }
-  if (seenTypes.has('Binary')) fail('caregiver policy: must not grant Binary (transcript binaries would be one ID guess away)');
-  else ok('no Binary grant (binaries flow only through readable DocumentReferences)');
+  if (seenTypes.has('Binary')) {
+    ok('Binary granted read-only (scoped by securityContext inheritance, not criteria)');
+  } else {
+    fail('caregiver policy: Binary grant missing — the family app cannot read summary text without it (Medplum returns a bare Binary/<id>, 403 on fetch)');
+  }
 
   const enc = terminology.codeSystems.encounterReason;
   const task = terminology.codeSystems.taskCategory;
