@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -1065,6 +1066,28 @@ def _document_reference(
     return resource
 
 
+def binary_id_from_url(url: str) -> str | None:
+    """Binary id from an attachment URL, in either shape Medplum uses.
+
+    There are two, and matching only the first is why guidance never had any
+    evidence to work from:
+
+    ``Binary/<id>``
+        The reference this service *writes*.
+    ``https://storage.medplum.com/binary/<id>/<versionId>?Expires=…``
+        The presigned link Medplum *serves* — note the lower case. Every read
+        of a DocumentReference comes back in this form, including our own, so a
+        ``startswith("Binary/")`` test was false every single time: notes read
+        as empty, ``findings`` was always ``[]``, and guidance concluded there
+        was not enough evidence on a patient with a year of calls behind them.
+
+    The same defect in the TypeScript client stopped every check-in summary
+    from loading; this is its twin on the Python side.
+    """
+    match = re.search(r"\bbinary/([A-Za-z0-9\-.]{1,64})", url, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
 async def read_recent_note_texts(
     store: FHIRStore,
     terminology: Terminology,
@@ -1096,9 +1119,10 @@ async def read_recent_note_texts(
     for document in documents[:limit]:
         url = ((document.get("content") or [{}])[0].get("attachment") or {}).get("url") or ""
         text = ""
-        if url.startswith("Binary/"):
+        binary_id = binary_id_from_url(url)
+        if binary_id:
             try:
-                binary = await store.read("Binary", url.split("/", 1)[1])
+                binary = await store.read("Binary", binary_id)
                 raw = binary.get("data")
                 if raw:
                     text = base64.b64decode(raw).decode("utf-8", errors="replace")
@@ -1161,6 +1185,26 @@ async def write_family_guidance(
     if organization_ref:
         resource["custodian"] = {"reference": organization_ref}
 
+    # One current guidance document per patient, but NOT via a conditional PUT.
+    # Hosted Medplum does not support update-as-create (verified live, and the
+    # same trap that broke every post-call write once already): a
+    # `PUT DocumentReference?...` that matches nothing fails rather than
+    # creating. Guidance had never been written for anyone, and this is why —
+    # the failure was swallowed by the pass's own best-effort handler.
+    #
+    # So: look first, then update the one that exists or create a new one.
+    existing = await store.search(
+        "DocumentReference",
+        {
+            "subject": f"Patient/{patient_id}",
+            "category": f"{guidance_coding.system}|{guidance_coding.code}",
+            "_count": "1",
+        },
+    )
+    existing_id = existing[0].get("id") if existing else None
+    if existing_id:
+        resource["id"] = existing_id
+
     entries = [
         {
             "fullUrl": binary_ref,
@@ -1175,14 +1219,11 @@ async def write_family_guidance(
         {
             "fullUrl": doc_ref,
             "resource": resource,
-            # Conditional update: one current guidance document per patient.
-            "request": {
-                "method": "PUT",
-                "url": (
-                    "DocumentReference?subject=Patient/"
-                    f"{patient_id}&category={guidance_coding.system}|{guidance_coding.code}"
-                ),
-            },
+            "request": (
+                {"method": "PUT", "url": f"DocumentReference/{existing_id}"}
+                if existing_id
+                else {"method": "POST", "url": "DocumentReference"}
+            ),
         },
     ]
     response = await store.transaction(

@@ -116,7 +116,13 @@ class FakeMedplum:
             elif key == "status":
                 results = [r for r in results if r.get("status") == value]
             elif key == "category":
-                results = [r for r in results if value in self._category_codes(r)]
+                # Real Medplum takes a token, `system|code`, and that is what
+                # production code sends. Matching only the bare code made this
+                # stub quietly more permissive than the server: a query the
+                # real API answers with nothing returned rows here, so a read
+                # path could pass its tests and find nothing in production.
+                wanted = value.split("|")[-1]
+                results = [r for r in results if wanted in self._category_codes(r)]
             # _sort / _count / date are handled below or ignored (stub)
         count = params.get("_count")
         if count is not None:
@@ -141,8 +147,17 @@ class FakeMedplum:
         id_map: dict[str, str] = {}
         for entry in entries:
             resource = entry["resource"]
-            self._counter += 1
-            bare_id = f"{resource['resourceType'].lower()}-{self._counter}"
+            # `PUT Type/<id>` targets an EXISTING resource and must keep its
+            # id, or every update reads as a create — which is how a write path
+            # that replaces one document per patient could pass its tests while
+            # accumulating a new one on every run.
+            request = entry.get("request") or {}
+            target = request.get("url", "")
+            if request.get("method") == "PUT" and "/" in target and "?" not in target:
+                bare_id = target.split("/", 1)[1]
+            else:
+                self._counter += 1
+                bare_id = f"{resource['resourceType'].lower()}-{self._counter}"
             id_map[entry["fullUrl"]] = f"{resource['resourceType']}/{bare_id}"
 
         def resolve(value: Any) -> Any:
@@ -159,9 +174,19 @@ class FakeMedplum:
             resource = resolve(dict(entry["resource"]))
             resource_type, bare_id = id_map[entry["fullUrl"]].split("/", 1)
             resource["id"] = bare_id
-            self.resources.setdefault(resource_type, []).append(resource)
-            self.writes.append(("create", resource))
-            response_entries.append({"resource": resource, "response": {"status": "201"}})
+            pool = self.resources.setdefault(resource_type, [])
+            replaced = next(
+                (i for i, r in enumerate(pool) if r.get("id") == bare_id), None
+            )
+            if replaced is None:
+                pool.append(resource)
+                self.writes.append(("create", resource))
+                status = "201"
+            else:
+                pool[replaced] = resource
+                self.writes.append(("update", resource))
+                status = "200"
+            response_entries.append({"resource": resource, "response": {"status": status}})
 
         return {
             "resourceType": "Bundle",
