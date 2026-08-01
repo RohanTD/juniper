@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Sequence
 
-from .context_brain import ContextBrain
+from .context_brain import ContextBrain, chunk_transcript
 from .controller import ConversationController, UnresolvedGap
 from .escalation import Escalation
 from .llm.provider import LLMProvider, ModelRoster
@@ -227,6 +227,25 @@ async def run_post_call(
             )
         except Exception:  # noqa: BLE001 - write-back must not sink the pass
             logger.exception("context brain write-back failed")
+
+    # Moss projection (docs/MOSS_PLAN.md): the store of record is written
+    # above; here its new memories plus the chunked transcript are upserted
+    # into the durable memories index. Best-effort — the store already holds
+    # everything, so a failed projection is recoverable on any later call.
+    retrieval = getattr(controller, "retrieval", None)
+    if retrieval is not None and context_brain is not None:
+        try:
+            docs = list(context_brain.memory_documents(controller.patient_id))
+            docs.extend(
+                chunk_transcript(
+                    transcript_text,
+                    controller.call_id,
+                    call_date=(call_end_iso or _iso(controller.clock()))[:10],
+                )
+            )
+            await retrieval.project_memories(docs)
+        except Exception:  # noqa: BLE001
+            logger.exception("memories projection failed; will re-project later")
 
     return PostCallResult(
         note_text=note_text,

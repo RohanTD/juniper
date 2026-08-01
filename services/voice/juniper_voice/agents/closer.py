@@ -76,10 +76,17 @@ class CloserAgent:
         self._model = model
 
     async def advise(
-        self, manifest: GapManifest, *, transcript_window_text: str = ""
+        self,
+        manifest: GapManifest,
+        *,
+        transcript_window_text: str = "",
+        probe_text: str | None = None,
     ) -> tuple[Advisory, ...]:
         if manifest.empty:
             return ()
+        probe_block = (
+            f"Targeted retrieval for the gap domains:\n{probe_text}\n\n" if probe_text else ""
+        )
         try:
             response = await self._provider.complete(
                 tag=TAG,
@@ -90,6 +97,7 @@ class CloserAgent:
                         "role": "user",
                         "content": (
                             f"Gap manifest:\n{manifest.render()}\n\n"
+                            f"{probe_block}"
                             f"Recent conversation:\n{transcript_window_text}"
                         ),
                     }

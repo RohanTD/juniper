@@ -39,6 +39,22 @@ class Settings:
     organization_ref: str | None = "Organization/UNSET-run-medplum-scripts-apply.sh"
     # Budgets
     ehr_brief_token_budget: int = 2500
+    # Context mode (docs/MOSS_PLAN.md): "brief" = compiled EHR brief + digest
+    # (the tested fallback); "moss" = semantic retrieval with the pinned core
+    # header. Brief stays the default until the Phase E flip.
+    context_mode: str = "brief"
+    moss_project_id: str | None = None
+    moss_project_key: str | None = None
+    moss_model: str = "moss-mediumlm"
+    moss_index_prefix: str = "juniper"
+    moss_query_timeout: float = 0.15
+    moss_hydrate_timeout: float = 2.0
+    moss_top_k_chart: int = 4
+    moss_top_k_memories: int = 3
+    moss_top_k_session: int = 3
+    moss_alpha: float = 0.7
+    moss_full_rebuild_every: int = 20
+    retrieval_state_path: str = "data/retrieval_state.json"
     # Models
     roster: ModelRoster = field(default_factory=ModelRoster)
     # Deepgram voice/listen models
@@ -66,6 +82,23 @@ class Settings:
             organization_ref=env.get("JUNIPER_ORGANIZATION_REFERENCE", default.organization_ref),
             ehr_brief_token_budget=int(
                 env.get("JUNIPER_EHR_BRIEF_TOKEN_BUDGET", default.ehr_brief_token_budget)
+            ),
+            context_mode=env.get("JUNIPER_CONTEXT_MODE", default.context_mode),
+            moss_project_id=env.get("MOSS_PROJECT_ID"),
+            moss_project_key=env.get("MOSS_PROJECT_KEY"),
+            moss_model=env.get("JUNIPER_MOSS_MODEL", default.moss_model),
+            moss_index_prefix=env.get("JUNIPER_MOSS_INDEX_PREFIX", default.moss_index_prefix),
+            moss_query_timeout=float(
+                env.get("JUNIPER_MOSS_QUERY_TIMEOUT", default.moss_query_timeout)
+            ),
+            moss_hydrate_timeout=float(
+                env.get("JUNIPER_MOSS_HYDRATE_TIMEOUT", default.moss_hydrate_timeout)
+            ),
+            moss_full_rebuild_every=int(
+                env.get("JUNIPER_MOSS_FULL_REBUILD_EVERY", default.moss_full_rebuild_every)
+            ),
+            retrieval_state_path=env.get(
+                "JUNIPER_RETRIEVAL_STATE_PATH", default.retrieval_state_path
             ),
             roster=ModelRoster.from_env(env),
             deepgram_listen_model=env.get(

@@ -16,6 +16,7 @@ Post-call write-back updates the experiential tier from the transcript.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -176,3 +177,83 @@ class ContextBrain:
             if isinstance(constraint, str):
                 self.add_negative_constraint(patient_id, constraint)
         return tuple(added)
+
+    # -- moss projection (docs/MOSS_PLAN.md) --------------------------------
+    def memory_documents(self, patient_id: str) -> list[dict[str, Any]]:
+        """The experiential tier as retrieval documents with STABLE ids, so
+        re-projection after an index purge is idempotent. The JSON store stays
+        the system of record; these are a derived view of it.
+
+        Negative constraints are projected too (type=constraint) so the store
+        remains the single authoring surface — but they are ALSO always pinned
+        into the prompt and enforced by the compassion filter. Their presence
+        here is for recall and debugging, never the enforcement path.
+        """
+        record = self.record(patient_id)
+        docs: list[dict[str, Any]] = []
+        for memory in record.memories:
+            docs.append(
+                {
+                    "id": f"memory-{_stable_id(memory)}",
+                    "text": memory,
+                    "metadata": {"type": "memory"},
+                }
+            )
+        for constraint in self.negative_constraints(patient_id):
+            docs.append(
+                {
+                    "id": f"constraint-{_stable_id(constraint)}",
+                    "text": f"Topic to avoid: {constraint}",
+                    "metadata": {"type": "constraint"},
+                }
+            )
+        return docs
+
+
+def _stable_id(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+
+def chunk_transcript(
+    transcript_text: str,
+    call_id: str,
+    *,
+    call_date: str = "",
+    turns_per_chunk: int = 6,
+) -> list[dict[str, Any]]:
+    """Chunk a rendered call transcript into topic-window documents for the
+    memories index — what makes "last time you mentioned…" retrievable
+    verbatim rather than as digest residue.
+
+    Chunks are fixed windows of speaker turns (a pragmatic stand-in for topic
+    segmentation), with one line of overlap so a thought split across a
+    boundary is findable from either side. Ids are stable per (call, chunk) so
+    re-projection is idempotent.
+    """
+    lines = [line for line in transcript_text.splitlines() if line.strip()]
+    if not lines:
+        return []
+    window = max(2, turns_per_chunk)
+    docs: list[dict[str, Any]] = []
+    step = max(1, window - 1)  # one line of overlap between chunks
+    for index, start in enumerate(range(0, len(lines), step)):
+        chunk_lines = lines[start : start + window]
+        if not chunk_lines:
+            break
+        if start > 0 and len(chunk_lines) == 1 and docs:
+            # A lone trailing line is already covered by the previous overlap.
+            break
+        docs.append(
+            {
+                "id": f"chunk-{call_id}-{index:04d}",
+                "text": "\n".join(chunk_lines),
+                "metadata": {
+                    "type": "prior-transcript",
+                    "call_id": call_id,
+                    "date": call_date,
+                },
+            }
+        )
+        if start + window >= len(lines):
+            break
+    return docs

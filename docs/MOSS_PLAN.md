@@ -1,8 +1,33 @@
 # Moss integration — restructuring the context architecture
 
-**Status: proposal.** This extends `docs/PLAN.md` (the design authority); nothing here
-overrides a locked decision, and one section below deliberately pushes back on part of the
-original ask. Written 2026-08-01 against Moss's published docs (`docs.moss.dev`).
+**Status: implemented 2026-08-01** (`retrieval.py` and the moss-mode wiring across the
+voice service; 98 tests green, brief mode remains the configured default per Phase B).
+This extends `docs/PLAN.md` (the design authority); nothing here overrides a locked
+decision, and one section below deliberately pushes back on part of the original ask.
+
+> **Implementation deviations from the text below** (each verified during build):
+>
+> 1. **The SDK validates credentials even for local sessions** — there is no fully
+>    offline mode. Real-SDK tests are therefore integration-gated on `MOSS_PROJECT_ID`;
+>    the offline suite runs against `FakeRetrieval`, and session-open failure is one more
+>    input to the fail-soft path. (Verified against `moss` 1.7.2 on PyPI — which IS the
+>    real Moss SDK, wrapping `inferedge-moss-core`; installs clean on Python 3.14.)
+> 2. **The pre-call full FHIR read stays, even in moss mode.** The consent gate must be
+>    fresh per call, the compiled brief remains the documentation context and the
+>    fail-soft target, and the same snapshot feeds the chart-document extraction — so
+>    one read produces brief + core header + documents, and the delta is computed
+>    client-side against the watermark (only changed documents are re-embedded). The
+>    "skip the read entirely" optimization moves to the Subscription→Bot future.
+> 3. **Per-query timeout defaults to 150ms, not ~50ms** — still noise against the 800ms
+>    budget, but tolerant of first-query warm-up; the controller additionally enforces a
+>    hard 500ms deadline on the whole retrieval step, trusting no implementation.
+> 4. **First-ever call for a patient runs in brief mode** while the chart index builds in
+>    the background (there is no enrollment hook yet; a heavy chart must never block
+>    dial). From the second call on, hydration + delta applies.
+> 5. **The chart delta cannot see FHIR deletions**, so every Nth call
+>    (`JUNIPER_MOSS_FULL_REBUILD_EVERY`, default 20) the index is rebuilt from scratch
+>    off the call path — the pragmatic stand-in for delete propagation until the
+>    Subscription→Bot path exists.
 
 ## What Moss is, verified
 

@@ -23,7 +23,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 from .agents.advisory import Advisory
 from .agents.closer import CloserAgent, GapManifest, GapSlot
@@ -37,6 +37,7 @@ from .latency import LatencyLog, TurnTimer
 from .llm.provider import LLMProvider, ModelRoster
 from .medplum import EHRBrief
 from .preferences import PreferencesStore
+from .retrieval import PatientRetrieval, RetrievedContext
 from .terminology import Terminology
 from .transcript import COMPANION, PATIENT, SYSTEM, TranscriptBuffer
 
@@ -76,6 +77,10 @@ class ControllerSettings:
     transcript_window: int = 12
     confidence_threshold: float = 0.6
     gatekeeper_max_attempts: int = 3
+    # Hard ceiling on per-turn retrieval, enforced HERE — the controller does
+    # not trust any PatientRetrieval implementation's internal timeouts with
+    # the latency budget.
+    retrieval_deadline: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -108,6 +113,8 @@ class ConversationController:
         clock: Callable[[], float] = time.monotonic,
         settings: ControllerSettings | None = None,
         start_phase: Phase = Phase.GATEKEEPER,
+        retrieval: PatientRetrieval | None = None,
+        core_header: str | None = None,
     ):
         self.call_id = call_id
         self.patient_id = patient_id
@@ -120,6 +127,11 @@ class ConversationController:
         self.brief = brief
         self.digest = digest
         self.negative_constraints = negative_constraints
+        # Moss mode (docs/MOSS_PLAN.md): retrieval replaces the BULK of the
+        # brief/digest; the pinned core header replaces brief.text in the
+        # Companion prompt. None => brief mode, byte-identical to before.
+        self.retrieval = retrieval
+        self.core_header = core_header
 
         self.transcript = TranscriptBuffer(clock=clock)
         self.latency = LatencyLog(clock=clock, call_id=call_id)
@@ -184,7 +196,7 @@ class ConversationController:
             timer.close()
         # Everything below happens after the reply exists — off the
         # critical path of this turn.
-        self._after_emit(patient_text)
+        self._after_emit(patient_text, reply)
         return reply
 
     async def _gatekeeper_turn(self, patient_text: str, timer: TurnTimer) -> str:
@@ -236,18 +248,21 @@ class ConversationController:
 
     async def _conversation_turn(self, patient_text: str, timer: TurnTimer) -> str:
         advisory = self._current_advisory()
+        # Urgency runs on patient input only, so it starts FIRST and runs in
+        # parallel with everything below — retrieval included. The most
+        # safety-critical component keeps its zero added latency.
+        urgency_task = asyncio.create_task(self.urgency.classify(patient_text))
+        retrieved = await self._retrieve_for_turn(patient_text, advisory, timer)
         with timer.stage("companion"):
-            # Urgency runs on patient input only, so it runs in parallel with
-            # the Companion and costs zero added latency on the happy path.
-            urgency_task = asyncio.create_task(self.urgency.classify(patient_text))
             compose_task = asyncio.create_task(
                 self.companion.compose(
                     transcript_window_text=self._window_text(),
                     digest=self.digest,
-                    brief_text=self.brief.text,
+                    brief_text=self._prompt_chart_context(),
                     advisory=advisory,
                     negative_constraints=self.negative_constraints,
                     closing=self.phase is Phase.CLOSING,
+                    retrieved=retrieved,
                 )
             )
             try:
@@ -264,14 +279,49 @@ class ConversationController:
                 draft = await self.companion.compose(
                     transcript_window_text=self._window_text(),
                     digest=self.digest,
-                    brief_text=self.brief.text,
+                    brief_text=self._prompt_chart_context(),
                     advisory=None,
                     negative_constraints=self.negative_constraints,
                     urgency=concern,
+                    retrieved=retrieved,
                 )
         with timer.stage("compassion"):
             final = await self._apply_compassion(draft, urgency_fired)
         return final
+
+    def _prompt_chart_context(self) -> str:
+        """What fills the Companion's chart slot: in moss mode the small pinned
+        core header (identity, allergies, active med names); in brief mode the
+        full compiled brief, exactly as before."""
+        if self.retrieval is not None and self.core_header is not None:
+            return self.core_header
+        return self.brief.text
+
+    async def _retrieve_for_turn(
+        self, patient_text: str, advisory: Advisory | None, timer: TurnTimer
+    ) -> RetrievedContext | None:
+        """Per-turn semantic retrieval — measured as its own critical-path
+        stage, and strictly fail-soft: any error degrades this turn to the
+        pinned core + transcript window, never to a broken call."""
+        if self.retrieval is None:
+            return None
+        window_start = max(0, self._turn_index - self.settings.transcript_window // 2)
+        with timer.stage("moss_retrieval"):
+            try:
+                return await asyncio.wait_for(
+                    self.retrieval.retrieve(
+                        patient_text,
+                        advisory_domain=advisory.domain if advisory else None,
+                        advisory_hook=(advisory.hook or None) if advisory else None,
+                        window_start_turn=window_start,
+                    ),
+                    timeout=self.settings.retrieval_deadline,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a thinner turn, never a dead one
+                logger.warning("retrieval failed; turn degrades to core header + window")
+                return None
 
     async def _apply_compassion(self, draft: str, urgency_fired: bool) -> str:
         verdict = await self.compassion.review(
@@ -407,6 +457,16 @@ class ConversationController:
         slot.confidence = float(confidence)
         slot.filled = slot.confidence >= self.settings.confidence_threshold
         slot.turns_since_progress = 0
+        if self.retrieval is not None:
+            try:
+                self._spawn(
+                    self.retrieval.append_finding(domain, dict(findings)),
+                    name="finding_append",
+                )
+            except RuntimeError:
+                # No running event loop (sync test contexts) — the finding is
+                # already recorded in coverage; the session copy is best-effort.
+                pass
         if (
             self.standing_advisory is not None
             and self.standing_advisory.domain == domain
@@ -427,7 +487,21 @@ class ConversationController:
     # ------------------------------------------------------------------
     # After-emit bookkeeping (off the critical path)
     # ------------------------------------------------------------------
-    def _after_emit(self, patient_text: str) -> None:
+    def _after_emit(self, patient_text: str, reply: str = "") -> None:
+        if self.retrieval is not None:
+            # Session indexing is bookkeeping, never latency: the turn pair is
+            # embedded and indexed in the background after the reply shipped.
+            urgent = bool(self.urgency_turns and self.urgency_turns[-1] == self._turn_index)
+            self._spawn(
+                self.retrieval.append_turn(
+                    turn=self._turn_index,
+                    patient_text=patient_text,
+                    companion_text=reply,
+                    phase=self.phase.value,
+                    urgent=urgent,
+                ),
+                name="session_append",
+            )
         if self.phase is Phase.MAIN:
             active = self.standing_advisory.domain if self.standing_advisory else None
             for code, slot in self.coverage.items():
@@ -485,9 +559,10 @@ class ConversationController:
             advisory = await self.fourm.refresh(
                 transcript_window_text=self._window_text(),
                 coverage_summary=self.coverage_summary(),
-                brief_text=self.brief.text,
+                brief_text=self._prompt_chart_context(),
                 digest=self.digest,
                 report=self.mark_domain_complete,
+                probe_text=await self._domain_probes(limit=2),
             )
             if advisory is not None and self.phase is Phase.MAIN:
                 slot = self.coverage.get(advisory.domain)
@@ -509,8 +584,16 @@ class ConversationController:
         turn = self._turn_index
         try:
             manifest = self.build_gap_manifest()
+            # Probe the manifest's own gaps, lowest confidence first — the
+            # same clinical ordering the Closer's fallback uses.
+            gap_domains = [
+                slot.domain
+                for slot in sorted(manifest.unfilled, key=lambda slot: slot.confidence)[:2]
+            ]
             advisories = await self.closer.advise(
-                manifest, transcript_window_text=self._window_text()
+                manifest,
+                transcript_window_text=self._window_text(),
+                probe_text=await self._probe_domains(gap_domains),
             )
             if self.phase is Phase.CLOSING:
                 self.closing_queue = list(advisories)
@@ -520,6 +603,36 @@ class ConversationController:
             logger.exception("closer refresh failed")
         finally:
             self.latency.record_slow_loop(turn, "closer_refresh", self.clock() - started)
+
+    async def _domain_probes(self, limit: int = 2) -> str | None:
+        """Probes for the 4M advisor: the most-stalled unfilled domains."""
+        if self.retrieval is None:
+            return None
+        stalled = sorted(
+            (slot for slot in self.coverage.values() if not slot.filled),
+            key=lambda slot: slot.turns_since_progress,
+            reverse=True,
+        )[:limit]
+        return await self._probe_domains([slot.domain for slot in stalled])
+
+    async def _probe_domains(self, domains: Sequence[str]) -> str | None:
+        """Domain-targeted retrieval for the slow-loop advisors. Runs only
+        inside slow-loop tasks — never on a turn's critical path — and fails
+        soft to None."""
+        if self.retrieval is None or not domains:
+            return None
+        blocks: list[str] = []
+        for domain in domains:
+            try:
+                docs = await self.retrieval.probe_domain(domain)
+            except Exception:  # noqa: BLE001
+                logger.warning("domain probe failed for %s", domain)
+                continue
+            if docs:
+                display = self._domain_display.get(domain, domain)
+                blocks.append(f"Retrieved for {display} [{domain}]:")
+                blocks.extend(f"- {doc.text}" for doc in docs)
+        return "\n".join(blocks) or None
 
     def _spawn(self, coro, name: str) -> asyncio.Task:
         task = asyncio.create_task(coro, name=f"{self.call_id}:{name}")
