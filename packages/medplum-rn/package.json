@@ -22,9 +22,9 @@
   "devDependencies": {
     "@medplum/core": "5.1.27",
     "@medplum/fhirtypes": "5.1.27",
-    "expo-auth-session": "~57.0.5",
-    "expo-secure-store": "~57.0.1",
-    "expo-web-browser": "~57.0.2",
+    "expo-auth-session": "~56.0.16",
+    "expo-secure-store": "~56.0.4",
+    "expo-web-browser": "~56.0.6",
     "typescript": "~5.9.2"
   }
 }

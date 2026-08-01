@@ -12,8 +12,12 @@ module.exports = {
       {
         tsconfig: {
           target: 'ES2022',
-          module: 'commonjs',
-          moduleResolution: 'node',
+          // TS5011: tests live in __tests__ but import from ../src.
+          rootDir: '.',
+          module: 'node16',
+          // TS6 deprecates node10 resolution; node16 is the forward-compatible
+          // pairing for the commonjs output ts-jest needs.
+          moduleResolution: 'node16',
           jsx: 'react-jsx',
           esModuleInterop: true,
           resolveJsonModule: true,
