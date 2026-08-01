@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -186,6 +187,10 @@ def create_app(
     app.state.prepare_call = prepare_call
 
     async def finish_call(call_id: str) -> None:
+        # Captured here, before any post-call LLM work runs, so the
+        # Encounter/DocumentReference period reflects the actual hangup time
+        # rather than whenever note generation happens to finish.
+        call_end_iso = datetime.now(timezone.utc).isoformat()
         controller = registry.pop(call_id)
         if controller is None:
             return
@@ -199,6 +204,7 @@ def create_app(
                 device_ref=settings.device_ref,
                 organization_ref=settings.organization_ref,
                 context_brain=context_brain,
+                call_end_iso=call_end_iso,
             )
         except Exception:  # noqa: BLE001
             logger.exception("post-call pass failed for %s", call_id)
