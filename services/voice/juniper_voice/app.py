@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
@@ -26,12 +27,14 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import JSONResponse, Response
 
 from . import llm_endpoint
+from .agents.gatekeeper import scripted_greeting
 from .config import Settings
 from .context_brain import ContextBrain
-from .controller import ConversationController, Phase
+from .controller import ControllerSettings, ConversationController, Phase
+from .transcript import COMPANION
 from .documentation import run_post_call
 from .escalation import EscalationSink
-from .llm.provider import AnthropicProvider, LLMProvider
+from .llm.provider import AnthropicProvider, GroqProvider, LLMProvider, RoutingProvider
 from .llm_endpoint import require_bearer
 from .medplum import MedplumClient, compile_core_header, compile_patient_context
 from .preferences import Preferences, PreferencesStore
@@ -62,17 +65,21 @@ def validate_twilio_signature(
 # Deepgram Voice Agent settings (docs/DEEPGRAM_INTEGRATION.md)
 # ---------------------------------------------------------------------------
 
-def build_deepgram_settings(settings: Settings, call_id: str) -> dict[str, Any]:
+def build_deepgram_settings(
+    settings: Settings, call_id: str, greeting: str | None = None
+) -> dict[str, Any]:
     headers = {}
     if settings.api_token:
         headers["authorization"] = f"Bearer {settings.api_token}"
-    return {
-        "type": "Settings",
-        "audio": {
-            "input": {"encoding": "mulaw", "sample_rate": 8000},
-            "output": {"encoding": "mulaw", "sample_rate": 8000, "container": "none"},
-        },
-        "agent": {
+    agent: dict[str, Any] = {}
+    if greeting:
+        # Spoken by TTS the moment the session opens — no LLM round trip.
+        # The scripted opening ("Hi, this is Juniper checking in. Is this
+        # {name}?") replaces what used to be a 3-6s silent gap while the
+        # gatekeeper LLM composed a greeting after the patient said hello.
+        agent["greeting"] = greeting
+    agent.update(
+        {
             "listen": {
                 "provider": {"type": "deepgram", "model": settings.deepgram_listen_model}
             },
@@ -88,7 +95,15 @@ def build_deepgram_settings(settings: Settings, call_id: str) -> dict[str, Any]:
             "speak": {
                 "provider": {"type": "deepgram", "model": settings.deepgram_speak_model}
             },
+        }
+    )
+    return {
+        "type": "Settings",
+        "audio": {
+            "input": {"encoding": "mulaw", "sample_rate": 8000},
+            "output": {"encoding": "mulaw", "sample_rate": 8000, "container": "none"},
         },
+        "agent": agent,
     }
 
 
@@ -107,8 +122,24 @@ def create_app(
     terminology: Terminology | None = None,
     escalation_notifier: Any | None = None,
 ) -> FastAPI:
+    # No handler was ever attached to the root logger, so every "juniper.*"
+    # INFO log — including the per-turn latency breakdown this file's own
+    # docstring says is "continuous, not a one-off" — was silently dropped in
+    # any real deployment. basicConfig() is a no-op if a handler already
+    # exists (e.g. under a process manager that configures its own), so this
+    # is safe to call unconditionally.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     settings = settings or Settings.from_env()
-    provider = provider or AnthropicProvider(api_key=settings.anthropic_api_key)
+    if provider is None:
+        # Model name selects the provider (see RoutingProvider): the
+        # latency-critical roles run on Groq, the documentation pass stays on
+        # Anthropic. Groq is optional — without a key the service still runs,
+        # and any Groq-named model in the roster fails loudly rather than
+        # silently falling back to a model nobody chose.
+        provider = RoutingProvider(
+            anthropic=AnthropicProvider(api_key=settings.anthropic_api_key),
+            groq=GroqProvider(api_key=settings.groq_api_key) if settings.groq_api_key else None,
+        )
     if medplum is None and settings.medplum_base_url:
         medplum = MedplumClient(
             settings.medplum_base_url,
@@ -131,6 +162,13 @@ def create_app(
     app.state.context_brain = context_brain
     app.state.terminology = terminology
     app.state.post_call_tasks = set()
+    # Pre-warm cache: patient_id -> (compiled PatientContext, monotonic ts).
+    # Filled by prewarm_patient() BEFORE the outbound call is dialed, so the
+    # expensive work (broad FHIR read + brief compile, and the Moss chart
+    # index build) is already done by the time the patient picks up. Without
+    # it that work runs inside the Twilio webhook — measured at ~6s of dead
+    # air on a cold index, with the patient already on the line.
+    app.state.warm_context: dict[str, tuple[Any, float]] = {}
 
     app.include_router(llm_endpoint.router)
 
@@ -190,6 +228,36 @@ def create_app(
         return JSONResponse({"purged": purged, "pending": not purged})
 
     # -- call preparation ----------------------------------------------------
+    # How long a pre-warmed brief stays usable. Long enough to cover
+    # prewarm -> dial -> ring -> answer, short enough that a chart edited
+    # between warming and dialing isn't served stale.
+    WARM_TTL_SECONDS = 600.0
+
+    async def _compiled_context(patient_id: str, *, force: bool = False):
+        """Compiled patient context, from the pre-warm cache when fresh.
+
+        The consent gate is INSIDE compile_patient_context, so a cache hit
+        also reuses the consent decision. That is the one thing here worth
+        being deliberate about: the TTL is what bounds how stale a consent
+        check can be, which is why it is minutes rather than hours.
+        """
+        if not force:
+            cached = app.state.warm_context.get(patient_id)
+            if cached is not None:
+                context, stamped = cached
+                if time.monotonic() - stamped < WARM_TTL_SECONDS:
+                    logger.info("using pre-warmed context for patient=%s", patient_id)
+                    return context
+                app.state.warm_context.pop(patient_id, None)
+        context = await compile_patient_context(
+            medplum,
+            patient_id,
+            terminology,
+            token_budget=settings.ehr_brief_token_budget,
+        )
+        app.state.warm_context[patient_id] = (context, time.monotonic())
+        return context
+
     def _make_retrieval(call_id: str, patient_id: str):
         """Build the per-call MossRetrieval, or None when moss mode is off or
         unconfigured. Import is local so brief mode never touches the SDK."""
@@ -244,23 +312,38 @@ def create_app(
         latency path."""
         if medplum is None:
             raise RuntimeError("Medplum is not configured; cannot prepare a call")
-        patient_context = await compile_patient_context(
-            medplum,
-            patient_id,
-            terminology,
-            token_budget=settings.ehr_brief_token_budget,
-        )
+        patient_context = await _compiled_context(patient_id)
         brief = patient_context.brief
 
         shadow = settings.context_mode == "shadow"
         retrieval = _make_retrieval(call_id, patient_id)
         core_header: str | None = None
         if retrieval is not None:
-            if await retrieval.ensure_ready():
+            # Hydration is bounded HERE, not trusted to the implementation —
+            # the same stance controller.retrieval_deadline takes per turn.
+            # This runs inside the Twilio webhook handler, so every second it
+            # takes is a second of dead air for a patient who has already
+            # picked up (measured live at ~2.8s warm, ~5s cold). MOSS_PLAN.md
+            # budgets hydration at ~2s and specifies brief mode as the
+            # fail-soft target; that is now enforced rather than aspirational.
+            ready = False
+            try:
+                ready = await asyncio.wait_for(
+                    retrieval.ensure_ready(), timeout=settings.moss_hydrate_timeout
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "moss hydration exceeded %.1fs for %s; brief mode",
+                    settings.moss_hydrate_timeout,
+                    call_id,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("moss hydration failed for %s; brief mode", call_id)
+            if ready:
                 core_header = compile_core_header(brief, patient_context.snapshot)
             else:
-                # Hydration failed (or a purge is pending): the patient still
-                # gets their call, with today's compiled-brief context.
+                # Hydration failed/timed out (or a purge is pending): the
+                # patient still gets their call, with compiled-brief context.
                 logger.warning("moss hydration unavailable for %s; brief mode", call_id)
                 retrieval = None
 
@@ -268,6 +351,10 @@ def create_app(
             call_id=call_id,
             patient_id=patient_id,
             provider=provider,
+            settings=ControllerSettings(
+                urgency_filter_enabled=settings.urgency_filter_enabled,
+                compassion_filter_enabled=settings.compassion_filter_enabled,
+            ),
             roster=settings.roster,
             terminology=terminology,
             brief=brief,
@@ -289,6 +376,53 @@ def create_app(
         return controller
 
     app.state.prepare_call = prepare_call
+
+    async def prewarm_patient(patient_id: str) -> dict[str, Any]:
+        """Do the slow pre-call work BEFORE dialing.
+
+        Two costs move off the answered-call path: the broad FHIR read +
+        brief compile, and (in shadow/moss mode) building or refreshing the
+        durable Moss chart index. Both are patient-scoped, not call-scoped,
+        so they can be done ahead of time and reused. If the patient never
+        picks up the work is simply wasted — cheap, and re-running it later
+        is safe because both steps are idempotent.
+        """
+        started = time.monotonic()
+        context = await _compiled_context(patient_id, force=True)
+        index_ready: bool | None = None
+        if settings.context_mode in ("shadow", "moss"):
+            # call_id is cosmetic here — the expensive artifact is the
+            # DURABLE per-patient chart index, which persists for the real
+            # call that follows.
+            retrieval = _make_retrieval(f"prewarm:{patient_id}", patient_id)
+            if retrieval is not None:
+                try:
+                    index_ready = await retrieval.ensure_ready()
+                finally:
+                    await retrieval.close()
+        elapsed = round(time.monotonic() - started, 2)
+        logger.info(
+            "prewarm patient=%s took=%ss brief_tokens=%s index_ready=%s",
+            patient_id, elapsed, context.brief.token_estimate, index_ready,
+        )
+        return {
+            "patientId": patient_id,
+            "seconds": elapsed,
+            "briefTokens": context.brief.token_estimate,
+            "indexReady": index_ready,
+        }
+
+    app.state.prewarm_patient = prewarm_patient
+
+    @app.post("/calls/prewarm")
+    async def prewarm(request: Request):
+        """Call this immediately BEFORE placing an outbound call."""
+        require_bearer(request, settings.api_token)
+        body = await request.json()
+        patient_id = str(body.get("patientId") or "").strip()
+        if not patient_id:
+            raise HTTPException(status_code=422, detail="patientId is required")
+        return JSONResponse(await prewarm_patient(patient_id))
 
     async def finish_call(call_id: str) -> None:
         # Captured here, before any post-call LLM work runs, so the
@@ -395,12 +529,26 @@ def create_app(
             await websocket.close(code=1011)
             return
 
+        # Scripted opening: spoken by Deepgram at session start with no LLM
+        # round trip, and recorded on the transcript so documentation (which
+        # reads the complete transcript) sees the call's true first line.
+        greeting: str | None = None
+        opening_controller = registry.get(call_id)
+        if opening_controller is not None:
+            greeting = scripted_greeting(
+                opening_controller.brief.patient_name,
+                opening_controller.brief.preferred_name,
+            )
+            opening_controller.transcript.append(COMPANION, greeting)
+
         try:
             async with ws_client.connect(
                 DEEPGRAM_AGENT_URL,
                 additional_headers={"Authorization": f"Token {settings.deepgram_api_key}"},
             ) as deepgram:
-                await deepgram.send(json.dumps(build_deepgram_settings(settings, call_id)))
+                await deepgram.send(
+                    json.dumps(build_deepgram_settings(settings, call_id, greeting=greeting))
+                )
 
                 async def pump_twilio_to_deepgram() -> None:
                     nonlocal stream_sid

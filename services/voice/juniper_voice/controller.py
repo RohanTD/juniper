@@ -31,7 +31,12 @@ from .agents.advisory import Advisory
 from .agents.closer import CloserAgent, GapManifest, GapSlot
 from .agents.companion import Companion
 from .agents.fourm import FourMAgent
-from .agents.gatekeeper import Gatekeeper, GatekeeperOutcome
+from .agents.gatekeeper import (
+    CONFIRMED_REPLY,
+    Gatekeeper,
+    GatekeeperOutcome,
+    is_clear_identity_yes,
+)
 from .escalation import EscalationSink
 from .filters.compassion import CompassionFilter
 from .filters.urgency import UrgencyFilter, UrgencyResult
@@ -83,6 +88,23 @@ class ControllerSettings:
     # not trust any PatientRetrieval implementation's internal timeouts with
     # the latency budget.
     retrieval_deadline: float = 0.5
+    # Collapse the turn to a SINGLE LLM call (docs/PLAN.md's three-call turn
+    # becomes one). Both default True so the contracted architecture — and
+    # the whole offline suite that guards it — is unchanged; the demo config
+    # turns them off in .env, and turning them back on is a one-line revert.
+    #
+    # Measured cost of each, so the tradeoff is explicit rather than implied:
+    #   urgency    251 tok/turn (10%), 0ms  — runs in PARALLEL, so disabling
+    #              it buys no latency at all. What it costs is the escalation
+    #              path: no real-time care-team Task, and the
+    #              urgency-outranks-compassion precedence becomes unreachable.
+    #   compassion 389 tok/turn (15%), ~280ms sequential. Its screening
+    #              (anti-condescension, negative constraints) is already
+    #              instructed in the Companion's persona — what is lost is the
+    #              INDEPENDENT check, i.e. a model that decides to mention the
+    #              late husband also decides that was fine.
+    urgency_filter_enabled: bool = True
+    compassion_filter_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -216,9 +238,50 @@ class ConversationController:
         return reply
 
     async def _gatekeeper_turn(self, patient_text: str, timer: TurnTimer) -> str:
+        # Urgency starts first — scripted turn or not, every patient utterance
+        # is classified. It is the floor cost of the fast path, and that is
+        # deliberate: it is the safety invariant (unless explicitly disabled).
+        urgency_task = (
+            asyncio.create_task(self.urgency.classify(patient_text))
+            if self.settings.urgency_filter_enabled
+            else None
+        )
+        if is_clear_identity_yes(patient_text):
+            # Scripted opening fast path: the greeting was spoken by
+            # Deepgram's agent.greeting (zero LLM), the patient clearly
+            # confirmed identity, and the scripted follow-up is a pre-vetted
+            # constant — no gatekeeper LLM, no compassion pass. Measured
+            # baseline for this same turn via the LLM path: 3.7-6.0s.
+            with timer.stage("companion"):
+                try:
+                    concern = (
+                        await urgency_task
+                        if urgency_task is not None
+                        else UrgencyResult(urgent=False)
+                    )
+                finally:
+                    if urgency_task is not None:
+                        _cancel_pending(urgency_task)
+            self.phase = Phase.MAIN
+            if concern.urgent:
+                # "Yes — but my chest hurts" style openings: the scripted
+                # reply is abandoned and the urgency path takes over whole.
+                self._on_urgency(concern, patient_text)
+                with timer.stage("companion"):
+                    reply = await self.companion.compose(
+                        transcript_window_text=self._window_text(),
+                        digest=self.digest,
+                        brief_text=self._prompt_chart_context(),
+                        advisory=None,
+                        negative_constraints=self.negative_constraints,
+                        urgency=concern,
+                    )
+                with timer.stage("compassion"):
+                    reply = await self._apply_compassion(reply, True)
+                return reply
+            return CONFIRMED_REPLY
         self._gatekeeper_attempts += 1
         with timer.stage("companion"):
-            urgency_task = asyncio.create_task(self.urgency.classify(patient_text))
             assess_task = asyncio.create_task(
                 self.gatekeeper.assess(
                     patient_text,
@@ -230,9 +293,11 @@ class ConversationController:
             )
             try:
                 result = await assess_task
-                concern = await urgency_task
+                concern = (
+                    await urgency_task if urgency_task is not None else UrgencyResult(urgent=False)
+                )
             finally:
-                _cancel_pending(assess_task, urgency_task)
+                _cancel_pending(*(t for t in (assess_task, urgency_task) if t is not None))
         reply = result.reply
         urgency_fired = False
         if concern.urgent:
@@ -267,7 +332,11 @@ class ConversationController:
         # Urgency runs on patient input only, so it starts FIRST and runs in
         # parallel with everything below — retrieval included. The most
         # safety-critical component keeps its zero added latency.
-        urgency_task = asyncio.create_task(self.urgency.classify(patient_text))
+        urgency_task = (
+            asyncio.create_task(self.urgency.classify(patient_text))
+            if self.settings.urgency_filter_enabled
+            else None
+        )
         compose_task: asyncio.Task | None = None
         # The try/finally wraps the RETRIEVAL await too, not just composition:
         # barge-in during retrieval would otherwise orphan the urgency LLM
@@ -290,7 +359,9 @@ class ConversationController:
                     )
                 )
                 draft = await compose_task
-                concern = await urgency_task
+                concern = (
+                    await urgency_task if urgency_task is not None else UrgencyResult(urgent=False)
+                )
         finally:
             _cancel_pending(*(t for t in (compose_task, urgency_task) if t is not None))
         with timer.stage("companion"):
@@ -373,6 +444,11 @@ class ConversationController:
         return result
 
     async def _apply_compassion(self, draft: str, urgency_fired: bool) -> str:
+        if not self.settings.compassion_filter_enabled:
+            # Single-agent mode: warmth and the negative constraints are
+            # instructed in the Companion's own prompt, so the utterance ships
+            # as composed. No independent verification happens here.
+            return draft
         verdict = await self.compassion.review(
             draft, negative_constraints=self.negative_constraints
         )
@@ -390,6 +466,17 @@ class ConversationController:
             return draft
         attempts = 0
         while not verdict.passed and attempts < self.settings.max_rewrites:
+            # Each iteration is a full extra Companion (Sonnet) generation
+            # plus another compassion check, both counted inside the
+            # "compassion" latency stage — logged explicitly here because
+            # that stage's duration is otherwise unexplainable from outside.
+            logger.info(
+                "compassion flagged turn %d (%s); rewriting (attempt %d/%d)",
+                self._turn_index,
+                ", ".join(verdict.reasons),
+                attempts + 1,
+                self.settings.max_rewrites,
+            )
             draft = await self.companion.rewrite(draft, verdict.reasons)
             verdict = await self.compassion.review(
                 draft, negative_constraints=self.negative_constraints

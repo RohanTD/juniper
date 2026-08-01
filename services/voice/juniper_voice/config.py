@@ -11,12 +11,20 @@ from dotenv import load_dotenv
 from .llm.provider import ModelRoster
 
 
+def _flag(env: Mapping[str, str], name: str, default: bool) -> bool:
+    raw = env.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 @dataclass(frozen=True)
 class Settings:
     # Auth for our own HTTP surface (Deepgram think endpoint + preferences API)
     api_token: str | None = None
     # Upstream credentials
     anthropic_api_key: str | None = None
+    groq_api_key: str | None = None
     deepgram_api_key: str | None = None
     twilio_auth_token: str | None = None
     # Public host (scheme-less), used to build TwiML/Deepgram callback URLs
@@ -39,6 +47,11 @@ class Settings:
     organization_ref: str | None = "Organization/UNSET-run-medplum-scripts-apply.sh"
     # Budgets
     ehr_brief_token_budget: int = 2500
+    # Turn-loop composition. Defaults preserve docs/PLAN.md's contracted
+    # three-call turn; setting either to false collapses toward a single LLM
+    # call per turn. See ControllerSettings for the measured tradeoff.
+    urgency_filter_enabled: bool = True
+    compassion_filter_enabled: bool = True
     # Context mode (docs/MOSS_PLAN.md):
     #   "brief"  = compiled EHR brief + digest (the tested fallback, default)
     #   "shadow" = retrieval runs, is measured and logged, and reaches NO
@@ -62,7 +75,7 @@ class Settings:
     roster: ModelRoster = field(default_factory=ModelRoster)
     # Deepgram voice/listen models
     deepgram_listen_model: str = "nova-3"
-    deepgram_speak_model: str = "aura-2-thalia-en"
+    deepgram_speak_model: str = "aura-2-asteria-en"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -73,6 +86,7 @@ class Settings:
         return cls(
             api_token=env.get("JUNIPER_API_TOKEN"),
             anthropic_api_key=env.get("ANTHROPIC_API_KEY"),
+            groq_api_key=env.get("GROQ_API_KEY"),
             deepgram_api_key=env.get("DEEPGRAM_API_KEY"),
             twilio_auth_token=env.get("TWILIO_AUTH_TOKEN"),
             public_host=env.get("JUNIPER_PUBLIC_HOST", default.public_host),
@@ -85,6 +99,12 @@ class Settings:
             organization_ref=env.get("JUNIPER_ORGANIZATION_REFERENCE", default.organization_ref),
             ehr_brief_token_budget=int(
                 env.get("JUNIPER_EHR_BRIEF_TOKEN_BUDGET", default.ehr_brief_token_budget)
+            ),
+            urgency_filter_enabled=_flag(
+                env, "JUNIPER_URGENCY_FILTER", default.urgency_filter_enabled
+            ),
+            compassion_filter_enabled=_flag(
+                env, "JUNIPER_COMPASSION_FILTER", default.compassion_filter_enabled
             ),
             context_mode=env.get("JUNIPER_CONTEXT_MODE", default.context_mode),
             moss_project_id=env.get("MOSS_PROJECT_ID"),
