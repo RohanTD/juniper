@@ -249,7 +249,6 @@ def create_app(
     @app.websocket("/media")
     async def media(websocket: WebSocket):
         await websocket.accept()
-        call_id = websocket.query_params.get("call", "unknown-call")
         try:
             import websockets as ws_client
         except ImportError:  # pragma: no cover
@@ -260,7 +259,30 @@ def create_app(
             await websocket.close(code=1011)
             return
 
+        # Twilio's <Stream url="..."> does NOT forward query strings to the WS
+        # upgrade request, so `?call=<sid>` never arrives here (verified
+        # against a live call — every real connection saw a bare "/media").
+        # The `start` event's payload carries the real CallSid directly, so
+        # wait for it before opening Deepgram (its callback URL needs the
+        # call id embedded from the first byte).
+        call_id = "unknown-call"
         stream_sid: str | None = None
+        try:
+            async with asyncio.timeout(10):
+                while stream_sid is None:
+                    raw = await websocket.receive_text()
+                    message = json.loads(raw)
+                    if message.get("event") == "start":
+                        stream_sid = message["start"]["streamSid"]
+                        call_id = message["start"].get("callSid", call_id)
+                    elif message.get("event") == "stop":
+                        await websocket.close()
+                        return
+        except (TimeoutError, WebSocketDisconnect):
+            logger.error("no Twilio 'start' event received; closing media socket")
+            await websocket.close(code=1011)
+            return
+
         try:
             async with ws_client.connect(
                 DEEPGRAM_AGENT_URL,
@@ -274,9 +296,7 @@ def create_app(
                         raw = await websocket.receive_text()
                         message = json.loads(raw)
                         event = message.get("event")
-                        if event == "start":
-                            stream_sid = message["start"]["streamSid"]
-                        elif event == "media":
+                        if event == "media":
                             audio = base64.b64decode(message["media"]["payload"])
                             await deepgram.send(audio)
                         elif event == "stop":
