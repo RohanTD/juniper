@@ -28,9 +28,15 @@ class Settings:
     # Stores
     preferences_path: str = "data/preferences.json"
     context_brain_path: str = "data/context_brain.json"
-    # FHIR attribution
-    device_ref: str = "Device/juniper-voice-agent"
-    organization_ref: str | None = "Organization/juniper-pilot-clinic"
+    # FHIR attribution. Medplum assigns its own UUID on create — these must be
+    # the actual Device/Organization ids from the target project (printed by
+    # medplum/scripts/apply.sh), never the identifier slug. An unset value
+    # defaults to an obviously-fake placeholder rather than a plausible-looking
+    # one, so a misconfigured deployment fails loudly instead of silently
+    # writing DocumentReference.author/.custodian at a resource that doesn't
+    # exist in this project.
+    device_ref: str = "Device/UNSET-run-medplum-scripts-apply.sh"
+    organization_ref: str | None = "Organization/UNSET-run-medplum-scripts-apply.sh"
     # Budgets
     ehr_brief_token_budget: int = 2500
     # Models
