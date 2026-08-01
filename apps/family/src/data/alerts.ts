@@ -105,6 +105,38 @@ export function openAlerts(tasks: Task[] | undefined): Task[] {
   );
 }
 
+/**
+ * Strip machine timestamps out of an alert's prose.
+ *
+ * `Task.description` is written to be read by a family member at 11pm, and the
+ * generator used to drop a raw `2026-08-01T19:24:24.664005+00:00` into the
+ * middle of the sentence. That is fixed at the source, but alerts already
+ * written keep the text they were written with — rewriting clinical resources
+ * to tidy their wording is not something this app should do, so the noise is
+ * removed on the way to the screen instead.
+ *
+ * Nothing is invented: the timestamp is replaced with the day and time of day
+ * it encodes, which is what the sentence was trying to say.
+ */
+export function humaniseDescription(description: string | undefined): string | undefined {
+  if (!description) {
+    return description;
+  }
+  return description.replace(
+    /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g,
+    (iso) => {
+      const date = new Date(iso);
+      if (Number.isNaN(date.getTime())) {
+        return 'recently';
+      }
+      const hour = date.getHours();
+      const part =
+        hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
+      return `${date.toLocaleDateString('en-US', { weekday: 'long' })} ${part}`;
+    }
+  );
+}
+
 /** Plain-language progress line for an alert's footer. */
 export function alertStatusLine(task: Task): string {
   switch (task.status) {

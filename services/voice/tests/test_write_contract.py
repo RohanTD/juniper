@@ -10,7 +10,11 @@ rather than a shape detail — Binary.securityContext.
 
 from __future__ import annotations
 
-from juniper_voice.escalation import EscalationSink
+import re
+
+import pytest
+
+from juniper_voice.escalation import EscalationSink, describe_when
 from juniper_voice.medplum import write_post_call
 
 DEVICE_REF = "Device/juniper-voice-agent"
@@ -212,6 +216,10 @@ async def test_escalation_task_shape(medplum, terminology):
     description = task["description"]
     assert "chest" in description.lower()
     assert "addressed" in description.lower()
+    # ...and readable. A raw "2026-08-01T19:24:24.664005+00:00" in the middle
+    # of the sentence is a machine timestamp in prose written for a person; the
+    # exact instant lives in authoredOn, where a machine looks for it.
+    assert not re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", description), description
     assert len(result.task_ids) == 1
 
 
@@ -221,3 +229,20 @@ async def test_no_family_pair_is_written_when_the_summary_is_absent(medplum, ter
     assert result.family_summary_id is None
     assert len(_by_type(medplum, "Binary")) == 2
     assert len(_by_type(medplum, "DocumentReference")) == 2
+
+
+@pytest.mark.parametrize(
+    "iso,expected",
+    [
+        ("2026-08-01T09:10:00+00:00", "on Saturday morning"),
+        ("2026-08-01T14:00:00+00:00", "on Saturday afternoon"),
+        ("2026-08-01T19:24:24.664005+00:00", "on Saturday evening"),
+        ("2026-08-01T22:40:00+00:00", "on Saturday night"),
+        # Unparseable degrades to a vague phrase, never to the raw string and
+        # never to an exception inside the post-call pass.
+        ("", "recently"),
+        ("not-a-timestamp", "recently"),
+    ],
+)
+def test_describe_when_reads_as_prose(iso, expected):
+    assert describe_when(iso) == expected

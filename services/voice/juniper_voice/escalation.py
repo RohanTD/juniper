@@ -19,6 +19,34 @@ from .terminology import Terminology
 logger = logging.getLogger("juniper.escalation")
 
 
+def describe_when(iso: str) -> str:
+    """An ISO instant as a phrase a person can place: "on Saturday afternoon".
+
+    ``Task.description`` is written to be read by a family member at 11pm, and
+    a raw ``2026-08-01T19:24:24.664005+00:00`` in the middle of that sentence
+    is noise they have to decode. The exact instant is not lost — it stays in
+    ``Task.authoredOn``, which is where a machine looks for it.
+
+    An unparseable value degrades to "recently" rather than to the raw string:
+    a sentence that reads oddly is better than one with a timestamp in it, and
+    both are better than raising inside the post-call pass.
+    """
+    try:
+        moment = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return "recently"
+    hour = moment.hour
+    if hour < 12:
+        part = "morning"
+    elif hour < 17:
+        part = "afternoon"
+    elif hour < 21:
+        part = "evening"
+    else:
+        part = "night"
+    return f"on {moment.strftime('%A')} {part}"
+
+
 @dataclass(frozen=True)
 class Escalation:
     call_id: str
@@ -107,8 +135,13 @@ class EscalationSink:
                 "the companion addressed the concern directly during the call",
                 "the care team was notified when the concern was raised",
             ]
+            # "on 2026-08-01T19:24:24.664005+00:00" is a machine timestamp in a
+            # sentence written for a family member reading it at 11pm. The
+            # Task carries the exact instant in authoredOn, where a machine
+            # wants it; the prose says "on Saturday afternoon", which is what a
+            # person needs to place the event.
             description = (
-                f"During the Juniper check-in call on {escalation.noted_at_iso}, "
+                f"During the Juniper check-in call {describe_when(escalation.noted_at_iso)}, "
                 f'the patient said: "{escalation.utterance}". '
                 f"Assessed as {escalation.category}: {escalation.summary} "
                 f"What has already happened: {'; '.join(actions)}."

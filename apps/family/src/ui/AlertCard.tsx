@@ -21,7 +21,7 @@ import { Feather } from '@expo/vector-icons';
 import { useTheme } from '@juniper/theme';
 import type { Task } from '@medplum/fhirtypes';
 import { Pressable, View } from 'react-native';
-import { alertStatusLine, alertWhen } from '../data/alerts';
+import { alertStatusLine, alertWhen, humaniseDescription } from '../data/alerts';
 import { ThemedText } from './ThemedText';
 
 export interface AlertCardProps {
@@ -90,7 +90,7 @@ export function AlertCard({
       </View>
 
       <ThemedText variant="body" color={semantic.fgOnBg}>
-        {task.description ?? 'No details were recorded for this alert.'}
+        {humaniseDescription(task.description) ?? 'No details were recorded for this alert.'}
       </ThemedText>
 
       {/* What the CARE TEAM has done — read from Task.status, never written. */}
