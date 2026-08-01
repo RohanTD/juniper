@@ -69,7 +69,19 @@ export abstract class VoiceApiClient {
   constructor(options: VoiceApiOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.token = options.token;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // `fetch.bind(globalThis)`, never a bare `fetch`.
+    //
+    // Storing the browser's fetch as an instance property and calling it as
+    // `this.fetchImpl(...)` invokes it with THIS CLIENT as the receiver, and
+    // the DOM binding requires `window`:
+    //
+    //     TypeError: Failed to execute 'fetch' on 'Window': Illegal invocation
+    //
+    // It throws before any request is made, so it presents exactly like an
+    // unreachable service — which is what it was mistaken for. Node and the
+    // React Native polyfill are both lenient about the receiver, so this only
+    // ever fails on web, and only at runtime.
+    this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   }
 
@@ -111,9 +123,12 @@ export abstract class VoiceApiClient {
         `[juniper] ${label} never reached the service.\n` +
           `  from origin: ${origin}\n` +
           `  to:          ${url}\n` +
-          '  Either the voice service is not running, or that origin is not allowed by ' +
-          'JUNIPER_CORS_ORIGINS / JUNIPER_CORS_ORIGIN_REGEX. A browser blocks a ' +
-          'disallowed origin before the request leaves, so the service log stays empty.',
+          `  cause:       ${error instanceof Error ? error.message : String(error)}\n` +
+          '  A TypeError here is a bug in this client, not an environment problem. ' +
+          'Otherwise: the service may not be running, or this origin may not be ' +
+          'allowed by JUNIPER_CORS_ORIGINS / JUNIPER_CORS_ORIGIN_REGEX — a browser ' +
+          'blocks a disallowed origin before the request leaves, so the service log ' +
+          'stays empty either way.',
         error
       );
       throw error;

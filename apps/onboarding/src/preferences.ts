@@ -104,7 +104,19 @@ export class PreferencesClient {
   constructor(options: PreferencesClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.token = options.token;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // `fetch.bind(globalThis)`, never a bare `fetch`.
+    //
+    // Storing the browser's fetch as an instance property and calling it as
+    // `this.fetchImpl(...)` invokes it with THIS CLIENT as the receiver, and
+    // the DOM binding requires `window`:
+    //
+    //     TypeError: Failed to execute 'fetch' on 'Window': Illegal invocation
+    //
+    // It throws before any request is made, so it presents exactly like an
+    // unreachable service — which is what it was mistaken for. Node and the
+    // React Native polyfill are both lenient about the receiver, so this only
+    // ever fails on web, and only at runtime.
+    this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   }
 
