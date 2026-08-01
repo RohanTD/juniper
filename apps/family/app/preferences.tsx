@@ -14,6 +14,13 @@
  * 2. Topics-to-avoid are a hard prohibition, not a hint. They become negative
  *    constraints the compassion filter enforces independently of the
  *    Companion, so the copy treats them as consequential.
+ * 3. Interests are the positive counterpart, and they were missing here — the
+ *    onboarding flow collects them and the voice service uses them, but a
+ *    caregiver had no way to see or add one. They are the closest thing this
+ *    app has to IHI's "What Matters": specific activities, not categories, and
+ *    the raw material family guidance turns into a suggestion someone will
+ *    actually act on. Listed first because naming what someone loves is a
+ *    warmer thing to be asked than naming what hurts.
  */
 import { useTheme } from '@juniper/theme';
 import { Redirect } from 'expo-router';
@@ -49,6 +56,7 @@ export default function Preferences() {
   const state = usePreferences(patientId);
   const [draft, setDraft] = useState<PatientPreferences>();
   const [newTopic, setNewTopic] = useState('');
+  const [newInterest, setNewInterest] = useState('');
 
   useEffect(() => {
     if (state.preferences) setDraft(structuredClone(state.preferences));
@@ -58,6 +66,7 @@ export default function Preferences() {
 
   const windows = draft?.callWindows ?? [];
   const topics = draft?.topicsToAvoid ?? [];
+  const interests = draft?.interests ?? [];
   const dirty = draft && JSON.stringify(draft) !== JSON.stringify(state.preferences);
 
   const update = (next: Partial<PatientPreferences>) =>
@@ -221,6 +230,89 @@ export default function Preferences() {
           >
             <ThemedText variant="button">Add another time</ThemedText>
           </Pressable>
+
+          <SectionHeader title="Things they enjoy" />
+          <ThemedText variant="bodySmall" color={theme.colors.text.secondary}>
+            Juniper opens with these instead of a generic “how have you been?”. The more specific
+            the better — “her roses along the back fence” gives a real conversation to have;
+            “gardening” gives a category.
+          </ThemedText>
+
+          {interests.map((interest, index) => (
+            <View
+              key={`${interest}-${index}`}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderWidth: 1,
+                borderColor: theme.colors.rule,
+                borderRadius: theme.borderRadius.md,
+                padding: theme.spacing.base,
+                gap: theme.spacing.md,
+              }}
+            >
+              <ThemedText variant="body" style={{ flex: 1 }}>
+                {interest}
+              </ThemedText>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${interest}`}
+                onPress={() => update({ interests: interests.filter((_, i) => i !== index) })}
+                style={{ minHeight: 44, justifyContent: 'center' }}
+              >
+                <ThemedText variant="bodySmall" color={theme.colors.text.secondary}>
+                  Remove
+                </ThemedText>
+              </Pressable>
+            </View>
+          ))}
+
+          <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+            <TextInput
+              value={newInterest}
+              onChangeText={setNewInterest}
+              placeholder="e.g. her granddaughter Sofia's swim meets"
+              accessibilityLabel="Something they enjoy"
+              style={{
+                flex: 1,
+                borderWidth: 1,
+                borderColor: theme.colors.rule,
+                borderRadius: theme.borderRadius.md,
+                padding: theme.spacing.md,
+                minHeight: 44,
+                color: theme.colors.text.primary,
+                fontFamily: theme.typography.fonts.regular,
+                fontSize: theme.typography.sizes.md,
+              }}
+            />
+            <Pressable
+              accessibilityRole="button"
+              disabled={!newInterest.trim()}
+              onPress={() => {
+                update({ interests: [...interests, newInterest.trim()] });
+                setNewInterest('');
+              }}
+              style={{
+                borderRadius: theme.borderRadius.md,
+                paddingHorizontal: theme.spacing.lg,
+                justifyContent: 'center',
+                minHeight: 44,
+                backgroundColor: newInterest.trim()
+                  ? theme.colors.primary[500]
+                  : theme.colors.background.tertiary,
+              }}
+            >
+              <ThemedText
+                variant="button"
+                color={
+                  newInterest.trim() ? theme.colors.text.inverse : theme.colors.text.secondary
+                }
+              >
+                Add
+              </ThemedText>
+            </Pressable>
+          </View>
 
           <SectionHeader title="Topics to avoid" />
           <ThemedText variant="bodySmall" color={theme.colors.text.secondary}>

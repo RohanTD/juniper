@@ -29,7 +29,16 @@
         }
       ],
       "topicsToAvoid": ["her late husband Robert"],
-      "interests": ["Gardening", "Grandchildren", "Crosswords", "Old films"],
+      "interests": [
+        "Her roses — the yellow ones along the back fence",
+        "Her granddaughter Sofia's swim meets",
+        "The Sunday crossword, in pen",
+        "Old films, anything with dancing in it",
+        "Baking her mother's lemon cake",
+        "The cardinals at the kitchen window feeder",
+        "Choir practice at St. Bernadette's",
+        "Long phone calls with her sister Dolores in Baltimore"
+      ],
       "completedBy": { "role": "patient" },
       "enrollment": {
         "legalName": { "given": "Margaret", "family": "Alvarez" },
