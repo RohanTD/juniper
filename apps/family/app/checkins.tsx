@@ -28,7 +28,7 @@ export default function CheckIns() {
 
   return (
     <Screen>
-      <ThemedText variant="title" style={{ marginTop: theme.spacing.lg }}>
+      <ThemedText variant="h1" style={{ marginTop: theme.spacing.base }}>
         Check-in timeline
       </ThemedText>
       {loading ? (

@@ -13,13 +13,13 @@ export function EmptyState({ title, body }: { title: string; body: string }) {
     <View
       style={{
         backgroundColor: theme.colors.background.primary,
-        borderRadius: theme.radii.lg,
+        borderRadius: theme.borderRadius.lg,
         padding: theme.spacing.xl,
         gap: theme.spacing.sm,
         alignItems: 'center',
       }}
     >
-      <ThemedText variant="headline" style={{ textAlign: 'center' }}>
+      <ThemedText variant="h3" style={{ textAlign: 'center' }}>
         {title}
       </ThemedText>
       <ThemedText

@@ -1,6 +1,8 @@
 /**
- * Labeled text input. Label uses the mono section-label recipe; the input
- * itself is body text at the accessible floor with a large touch target.
+ * Labeled text input. Label uses the mono section-label recipe; the field is
+ * the theme's `components.input.base` recipe with the resolved body style laid
+ * over it, so the accessible type floor and OS font scaling both apply, plus a
+ * large touch target.
  */
 import { resolveTextStyle, useTheme } from '@juniper/theme';
 import { TextInput, useWindowDimensions, View, type TextInputProps, type TextStyle } from 'react-native';
@@ -25,15 +27,10 @@ export function TextField({ label, hint, style, ...rest }: TextFieldProps) {
         placeholderTextColor={theme.colors.text.secondary}
         {...rest}
         style={[
+          theme.components.input.base,
           bodyStyle,
           {
             color: theme.colors.text.primary,
-            backgroundColor: theme.colors.background.primary,
-            borderColor: theme.colors.border.strong,
-            borderWidth: 1,
-            borderRadius: theme.radii.md,
-            paddingHorizontal: theme.spacing.lg,
-            paddingVertical: theme.spacing.md,
             minHeight: theme.touchTarget.minHeight,
           },
           style,

@@ -38,11 +38,11 @@ export default function SignIn() {
 
   return (
     <Screen>
-      <View style={{ flex: 1, justifyContent: 'center', gap: theme.spacing.lg }}>
-        <ThemedText variant="eyebrow" color={theme.recipes.hero.eyebrow.color}>
+      <View style={{ flex: 1, justifyContent: 'center', gap: theme.spacing.base }}>
+        <ThemedText variant="label" color={theme.recipes.hero.eyebrow.color}>
           Juniper Family
         </ThemedText>
-        <ThemedText variant="title">Sign in to follow along</ThemedText>
+        <ThemedText variant="h1">Sign in to follow along</ThemedText>
         <ThemedText variant="body" color={theme.colors.text.secondary}>
           See how check-in calls are going, read plain-language summaries, and get notified if
           anything needs attention. Access is managed by the care team — if you were added as a

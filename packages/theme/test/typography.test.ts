@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   accessibleTextStyles,
   baseTextStyles,
+  fonts,
   resolveTextStyle,
+  sizes,
   type TextStyles,
-} from '../src/tokens';
+} from '../src/typography';
 import { accessibleTheme, baseTheme } from '../src/themes';
 
 function eachStyle(styles: TextStyles): Array<[string, TextStyles[keyof TextStyles]]> {
@@ -38,48 +40,69 @@ describe('line heights are multipliers, never fixed px', () => {
       }
     }
   });
+
+  it('resolves against the SCALED size, not the nominal one', () => {
+    const body = baseTextStyles.body; // 15 x 1.5
+    expect(resolveTextStyle(body, 1)).toMatchObject({ fontSize: 15, lineHeight: 22.5 });
+    expect(resolveTextStyle(body, 2)).toMatchObject({ fontSize: 30, lineHeight: 45 });
+  });
 });
 
-describe('accessible type-scale floor', () => {
-  it('has no 11px text anywhere', () => {
+describe('accessible type-scale floor (porting note 2c)', () => {
+  it('has no text below 13px anywhere', () => {
     for (const [name, style] of eachStyle(accessibleTextStyles)) {
-      expect(style.fontSize, name).toBeGreaterThanOrEqual(13);
+      expect(style.fontSize, name).toBeGreaterThanOrEqual(sizes.sm);
     }
   });
 
-  it('body text is at least 16, labels at least 13', () => {
-    expect(accessibleTextStyles.body.fontSize).toBeGreaterThanOrEqual(16);
-    expect(accessibleTextStyles.bodyLg.fontSize).toBeGreaterThanOrEqual(16);
-    expect(accessibleTextStyles.bodySm.fontSize).toBeGreaterThanOrEqual(16);
-    expect(accessibleTextStyles.caption.fontSize).toBeGreaterThanOrEqual(16);
-    expect(accessibleTextStyles.label.fontSize).toBeGreaterThanOrEqual(13);
-    expect(accessibleTextStyles.eyebrow.fontSize).toBeGreaterThanOrEqual(13);
+  it('nothing a patient must read sits below 16px', () => {
+    for (const name of ['body', 'bodyLarge', 'bodySmall', 'caption', 'button'] as const) {
+      expect(accessibleTextStyles[name].fontSize, name).toBeGreaterThanOrEqual(sizes.md);
+    }
   });
 
-  it('the base variant keeps the original 11px mono label (family app may use it)', () => {
-    expect(baseTextStyles.label.fontSize).toBe(11);
+  it('metadata recipes stop at the 13px floor rather than growing to 16', () => {
+    expect(accessibleTextStyles.label.fontSize).toBe(sizes.sm);
+    expect(accessibleTextStyles.meta.fontSize).toBe(sizes.sm);
+  });
+
+  it('the base variant keeps the spec\'s 11px mono label (family app may use it)', () => {
+    expect(baseTextStyles.label.fontSize).toBe(sizes.xs);
+    expect(baseTextStyles.meta.fontSize).toBe(sizes.xs);
   });
 });
 
 describe('font roles are fixed', () => {
-  it('display styles use Instrument Serif only; body/UI use Outfit; labels use IBM Plex Mono', () => {
+  it('display uses Instrument Serif only; body/UI use Outfit; label/meta use IBM Plex Mono', () => {
     for (const theme of [baseTheme, accessibleTheme]) {
       const s = theme.textStyles;
-      for (const d of [s.displayXl, s.displayLg, s.displayMd]) {
+      for (const d of [s.displayLarge, s.display, s.displayItalic]) {
         expect(d.fontFamily).toContain('InstrumentSerif');
       }
-      for (const b of [s.title, s.headline, s.body, s.bodyLg, s.bodySm, s.button, s.caption]) {
+      for (const b of [s.h1, s.h2, s.h3, s.h4, s.bodyLarge, s.body, s.bodySmall, s.caption, s.button]) {
         expect(b.fontFamily).toContain('Outfit');
       }
-      for (const m of [s.label, s.eyebrow]) {
+      for (const m of [s.label, s.meta]) {
         expect(m.fontFamily).toContain('IBMPlexMono');
-        expect(m.textTransform).toBe('uppercase');
+      }
+      // Only `label` is the uppercase tracked one; `meta` is fine print.
+      expect(s.label.textTransform).toBe('uppercase');
+      expect(s.meta.textTransform).toBeUndefined();
+    }
+  });
+
+  it('body copy never uses a display or mono family', () => {
+    for (const styles of [baseTextStyles, accessibleTextStyles]) {
+      for (const name of ['bodyLarge', 'body', 'bodySmall'] as const) {
+        expect(styles[name].fontFamily).toBe(fonts.regular);
       }
     }
   });
 
-  it('touch targets are larger in the accessible variant', () => {
-    expect(accessibleTheme.touchTarget.minHeight).toBeGreaterThanOrEqual(56);
+  it('touch targets are larger in the accessible variant (44 -> 56)', () => {
+    expect(baseTheme.touchTarget.minHeight).toBe(44);
+    expect(accessibleTheme.touchTarget.minHeight).toBe(56);
     expect(accessibleTheme.recipes.button.primary.minHeight).toBeGreaterThanOrEqual(56);
+    expect(accessibleTheme.recipes.listRow.minHeight).toBeGreaterThanOrEqual(56);
   });
 });

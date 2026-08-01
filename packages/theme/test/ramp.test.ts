@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { contrastRatio, oklabLightness } from '../src/color';
 import { generateRamp, RAMP_STEPS } from '../src/ramp';
-import { accent, juniper, JUNIPER_500, neutral, persimmon, ramps } from '../src/ramps';
+import {
+  accent,
+  juniper,
+  JUNIPER_500,
+  neutral,
+  persimmon,
+  primary,
+  ramps,
+} from '../src/ramps';
 
 describe('ramp generator', () => {
   it('produces exactly 10 steps, 50..900', () => {
@@ -19,7 +27,7 @@ describe('ramp generator', () => {
   });
 
   it('lightness is strictly monotonic (decreasing) for representative hues', () => {
-    for (const brand of [JUNIPER_500, '#E8572A', '#1F7A4D', '#C0392B', '#8A5A00', '#2B6CB0']) {
+    for (const brand of [JUNIPER_500, '#E8572A', '#10B981', '#EF4444', '#F59E0B', '#4361C2']) {
       const ramp = generateRamp(brand);
       const ladder = RAMP_STEPS.map((s) => oklabLightness(ramp[s]));
       for (let i = 1; i < ladder.length; i++) {
@@ -31,13 +39,31 @@ describe('ramp generator', () => {
   });
 });
 
-describe('juniper brand ramp', () => {
-  it('500 is the chosen brand hex', () => {
+describe('juniper brand ramp (porting note 1)', () => {
+  it('is a full ten-step ramp generated from the brand hex, not a 500-step swap', () => {
     expect(JUNIPER_500).toBe('#2C6E5E');
-    expect(juniper[500]).toBe(JUNIPER_500);
+    expect(juniper).toEqual(generateRamp(JUNIPER_500));
+    expect(Object.keys(juniper)).toHaveLength(10);
+    // No step may have survived from persimmon.
+    for (const step of RAMP_STEPS) {
+      expect(juniper[step], `step ${step}`).not.toBe(persimmon[step]);
+    }
   });
 
-  it('accent duplicates the juniper ramp as literals, per the theme note', () => {
+  it('500 is the chosen brand hex', () => {
+    expect(juniper[500]).toBe(JUNIPER_500);
+    expect(juniper[500]).toBe('#2C6E5E');
+  });
+
+  it('lightness is monotonic across the brand ramp', () => {
+    const ladder = RAMP_STEPS.map((s) => oklabLightness(juniper[s]));
+    for (let i = 1; i < ladder.length; i++) {
+      expect(ladder[i], `step ${RAMP_STEPS[i]}`).toBeLessThan(ladder[i - 1]);
+    }
+  });
+
+  it('`primary` is the brand ramp and `accent` duplicates it as literals', () => {
+    expect(primary).toBe(juniper);
     // accent is written as literals; this pins them to the generator output so
     // a brand change cannot silently leave stale literals behind.
     expect(accent).toEqual(juniper);
@@ -45,12 +71,13 @@ describe('juniper brand ramp', () => {
   });
 
   it('neutral ramp lightness is monotonic and carries the documented tokens', () => {
-    const ladder = RAMP_STEPS.map((s) => oklabLightness(neutral[s]));
+    const ladder = ([0, ...RAMP_STEPS] as const).map((s) => oklabLightness(neutral[s]));
     for (let i = 1; i < ladder.length; i++) {
       expect(ladder[i]).toBeLessThan(ladder[i - 1]);
     }
-    expect(neutral[600]).toBe('#5A5A66'); // text.secondary
-    expect(neutral[400]).toBe('#9E9EA7'); // text.tertiary (base variant only)
+    expect(neutral[0]).toBe('#FFFFFF'); // background.primary
+    expect(neutral[600]).toBe('#5A5A66'); // text.secondary / inkSoft
+    expect(neutral[900]).toBe('#111114'); // text.primary / ink
   });
 });
 

@@ -10,11 +10,11 @@ export function Hero({ eyebrow, title }: { eyebrow: string; title: string }) {
   const theme = useTheme();
   const recipe = theme.recipes.hero;
   return (
-    <View style={{ gap: recipe.gap, marginVertical: theme.spacing.lg }}>
-      <ThemedText variant="eyebrow" color={recipe.eyebrow.color}>
+    <View style={{ gap: recipe.gap, marginVertical: theme.spacing.base }}>
+      <ThemedText variant="label" color={recipe.eyebrow.color}>
         {eyebrow}
       </ThemedText>
-      <ThemedText variant="displayLg" color={recipe.display.color}>
+      <ThemedText variant="display" color={recipe.display.color}>
         {title}
       </ThemedText>
     </View>

@@ -1,65 +1,61 @@
 /**
  * The two theme variants.
  *
- *  - `baseTheme` — the Thoracle theme as ported: editorial, compact, designed
- *    for adult readers on good screens. Used by apps/family.
- *  - `accessibleTheme` — the patient-facing variant mandated by the port:
- *    every fg/bg pair AA-audited, `text.tertiary` REMOVED (not merely
- *    discouraged), raised type floor, larger touch targets. Used exclusively
- *    by apps/onboarding.
+ *  - `baseTheme` — THEME_SYSTEM.md sections 2–8 as ported, with only the
+ *    brand-ramp deviation (porting note 1). Editorial, compact, designed for
+ *    adult readers on good screens. Used by apps/family.
+ *  - `accessibleTheme` — the patient-facing variant (porting note 2), which
+ *    differs in exactly three ways: `text.tertiary` REMOVED (not merely
+ *    discouraged), a computed AA-passing button fill, a raised type floor and
+ *    larger touch targets. Used exclusively by apps/onboarding.
+ *
+ * Everything below the token layer — `semantic`, `recipes`, `touchTarget` — is
+ * the port's own app-facing scaffolding, composed strictly out of the spec's
+ * tokens. It adds no new values; where the spec names a convention (section 9's
+ * label-plus-rule header, icon-in-circle, cards-over-tables) these recipes are
+ * how the two apps consume it.
  *
  * `accessibleContrastPairs()` enumerates every foreground/background pair the
  * accessible variant actually uses, and is consumed by the contrast audit test
  * and available to CI.
  */
 import { contrastRatio } from './color';
-import type { ColorRamp, RampStep } from './ramp';
-import { accent, error, info, juniper, neutral, ramps, success, warning } from './ramps';
 import {
-  accessibleTextStyles,
+  accessiblePalette,
+  colors,
+  type AccessibleTextColors,
+  type PaletteColors,
+  type TextColors,
+} from './colors';
+import { accessibleComponents, components, type Components } from './components';
+import type { ColorRamp, RampStep } from './ramp';
+import { juniper, ramps } from './ramps';
+import {
   accessibleTouchTarget,
-  baseTextStyles,
+  animation,
   baseTouchTarget,
-  radii,
+  borderRadius,
+  layout,
   shadows,
   spacing,
-  fontFamilies,
   type ShadowToken,
-  type TextStyles,
   type TouchTargetToken,
 } from './tokens';
+import {
+  accessibleTextStyles,
+  baseTextStyles,
+  fonts,
+  typography,
+  type TextStyles,
+  type TextStyleToken,
+} from './typography';
 
 // ---------------------------------------------------------------------------
-// Named color tokens
+// Semantic sets — a thin, meaning-only read of the spec's success / warning /
+// error ramps (plus `secondary` for "info", which is the ramp the spec's own
+// `badge.info` recipe reaches for). Steps are chosen so every pair clears AA:
+// the 500/600 steps of the Tailwind-style ramps do NOT carry white text.
 // ---------------------------------------------------------------------------
-
-export interface BackgroundColors {
-  primary: string;
-  secondary: string;
-  tertiary: string;
-}
-
-export interface BaseTextColors {
-  primary: string;
-  secondary: string;
-  /** Base variant only — fails AA on white (~2.7:1). Metadata at your own risk. */
-  tertiary: string;
-  inverse: string;
-}
-
-/** The accessible variant deliberately has NO `tertiary`. `never` keeps it out at the type level too. */
-export interface AccessibleTextColors {
-  primary: string;
-  secondary: string;
-  inverse: string;
-  tertiary?: never;
-}
-
-export interface BorderColors {
-  subtle: string;
-  default: string;
-  strong: string;
-}
 
 export interface SemanticColorSet {
   /** Text of this meaning on background.primary. */
@@ -83,8 +79,26 @@ export interface SemanticColors {
   info: SemanticColorSet;
 }
 
+function semanticSet(ramp: ColorRamp): SemanticColorSet {
+  return {
+    text: ramp[800],
+    icon: ramp[700],
+    bg: ramp[50],
+    fgOnBg: ramp[900],
+    solid: ramp[700],
+    onSolid: colors.text.inverse,
+  };
+}
+
+const semantic: SemanticColors = {
+  success: semanticSet(colors.success),
+  error: semanticSet(colors.error),
+  warning: semanticSet(colors.warning),
+  info: semanticSet(colors.secondary),
+};
+
 // ---------------------------------------------------------------------------
-// Component recipes
+// App-facing recipes
 // ---------------------------------------------------------------------------
 
 export interface ButtonRecipe {
@@ -95,7 +109,7 @@ export interface ButtonRecipe {
   minHeight: number;
   borderRadius: number;
   paddingHorizontal: number;
-  textStyle: TextStyles['button'];
+  textStyle: TextStyleToken;
 }
 
 export interface CardRecipe {
@@ -104,23 +118,26 @@ export interface CardRecipe {
   padding: number;
   gap: number;
   shadow: ShadowToken;
+  /** Section 9's icon-in-circle: a `50`-step circle with a saturated icon. */
   iconCircle: { size: number; background: string; color: string };
-  title: { textStyle: TextStyles['headline']; color: string };
-  subtitle: { textStyle: TextStyles['bodySm']; color: string };
+  title: { textStyle: TextStyleToken; color: string };
+  subtitle: { textStyle: TextStyleToken; color: string };
   chevron: { color: string; size: number };
 }
 
+/** Section 9's label-plus-rule section header. */
 export interface SectionHeaderRecipe {
-  label: { textStyle: TextStyles['label']; color: string };
+  label: { textStyle: TextStyleToken; color: string };
   rule: { color: string; thickness: number };
   gap: number;
   marginTop: number;
   marginBottom: number;
 }
 
+/** Section 3's signature pattern: serif display + tracked mono eyebrow. */
 export interface HeroRecipe {
-  eyebrow: { textStyle: TextStyles['eyebrow']; color: string };
-  display: { textStyle: TextStyles['displayLg']; color: string };
+  eyebrow: { textStyle: TextStyleToken; color: string };
+  display: { textStyle: TextStyleToken; color: string };
   gap: number;
 }
 
@@ -142,13 +159,10 @@ export interface Recipes {
 // Theme shape
 // ---------------------------------------------------------------------------
 
-export interface ThemeColors<TText> {
-  background: BackgroundColors;
-  surface: { primary: string; sunken: string };
-  text: TText;
-  border: BorderColors;
-  accent: ColorRamp;
+export interface ThemeColors<TText> extends PaletteColors<TText> {
+  /** Meaning-only reads of the semantic ramps. */
   semantic: SemanticColors;
+  /** Every ramp, including the persimmon reference ramp. */
   ramps: typeof ramps;
 }
 
@@ -156,61 +170,30 @@ export interface ThemeBase<TText> {
   name: 'base' | 'accessible';
   colors: ThemeColors<TText>;
   spacing: typeof spacing;
-  radii: typeof radii;
+  borderRadius: typeof borderRadius;
   shadows: typeof shadows;
-  fonts: typeof fontFamilies;
+  typography: typeof typography;
+  fonts: typeof fonts;
   textStyles: TextStyles;
+  components: Components;
+  layout: typeof layout;
+  animation: typeof animation;
   touchTarget: TouchTargetToken;
   recipes: Recipes;
 }
 
-export type BaseTheme = ThemeBase<BaseTextColors>;
+export type BaseTheme = ThemeBase<TextColors>;
 export type AccessibleTheme = ThemeBase<AccessibleTextColors>;
 export type Theme = BaseTheme | AccessibleTheme;
-
-// ---------------------------------------------------------------------------
-// Shared literals
-// ---------------------------------------------------------------------------
-
-const background: BackgroundColors = {
-  primary: '#FFFFFF',
-  secondary: neutral[50],
-  tertiary: neutral[100],
-};
-
-const surface = { primary: '#FFFFFF', sunken: neutral[50] };
-
-const border: BorderColors = {
-  subtle: neutral[100],
-  default: neutral[200],
-  strong: neutral[300],
-};
-
-const WHITE = '#FFFFFF';
-
-function semanticSet(ramp: ColorRamp): SemanticColorSet {
-  return {
-    text: ramp[700],
-    icon: ramp[600],
-    bg: ramp[50],
-    fgOnBg: ramp[800],
-    solid: ramp[600],
-    onSolid: WHITE,
-  };
-}
-
-const semantic: SemanticColors = {
-  success: semanticSet(success),
-  error: semanticSet(error),
-  warning: semanticSet(warning),
-  info: semanticSet(info),
-};
 
 /**
  * "Whichever step actually clears 4.5:1" — scan the ramp from 500 downward and
  * return the first step whose contrast with the given text color passes AA for
  * normal text. This is how the accessible button fill is chosen, so a future
  * brand-color change re-derives the fill instead of silently failing.
+ *
+ * Persimmon needed 600; juniper resolves to 500. The number is hue-specific and
+ * must never be hardcoded (porting note 2b).
  */
 export function firstAccessibleFillStep(ramp: ColorRamp, text: string): RampStep {
   const candidates: RampStep[] = [500, 600, 700, 800, 900];
@@ -223,82 +206,76 @@ export function firstAccessibleFillStep(ramp: ColorRamp, text: string): RampStep
 }
 
 /** The AA-passing primary button fill for the Juniper ramp (recomputed, not assumed). */
-export const ACCESSIBLE_BUTTON_FILL_STEP: RampStep = firstAccessibleFillStep(juniper, WHITE);
+export const ACCESSIBLE_BUTTON_FILL_STEP: RampStep = firstAccessibleFillStep(
+  juniper,
+  colors.text.inverse
+);
 
 // ---------------------------------------------------------------------------
-// Base theme (Thoracle as ported) — apps/family
+// Base theme (the spec as ported) — apps/family
 // ---------------------------------------------------------------------------
-
-const baseText: BaseTextColors = {
-  primary: neutral[900],
-  secondary: neutral[600],
-  tertiary: neutral[400],
-  inverse: WHITE,
-};
 
 export const baseTheme: BaseTheme = {
   name: 'base',
-  colors: {
-    background,
-    surface,
-    text: baseText,
-    border,
-    accent,
-    semantic,
-    ramps,
-  },
+  colors: { ...colors, semantic, ramps },
   spacing,
-  radii,
+  borderRadius,
   shadows,
-  fonts: fontFamilies,
+  typography,
+  fonts,
   textStyles: baseTextStyles,
+  components,
+  layout,
+  animation,
   touchTarget: baseTouchTarget,
   recipes: {
     button: {
+      // section 7 `button.primary`
       primary: {
-        background: accent[500],
-        text: WHITE,
-        minHeight: 48,
-        borderRadius: radii.md,
-        paddingHorizontal: spacing.xl,
+        background: components.button.primary.backgroundColor,
+        text: colors.text.inverse,
+        minHeight: baseTouchTarget.minHeight,
+        borderRadius: components.button.primary.borderRadius,
+        paddingHorizontal: components.button.primary.paddingHorizontal,
         textStyle: baseTextStyles.button,
       },
+      // section 7 `button.outline` — the quiet companion to the primary CTA.
       secondary: {
-        background: 'transparent',
-        text: accent[600],
-        borderColor: accent[500],
-        borderWidth: 1,
-        minHeight: 48,
-        borderRadius: radii.md,
-        paddingHorizontal: spacing.xl,
+        background: components.button.outline.backgroundColor,
+        text: colors.text.accent,
+        borderColor: components.button.outline.borderColor,
+        borderWidth: components.button.outline.borderWidth,
+        minHeight: baseTouchTarget.minHeight,
+        borderRadius: components.button.outline.borderRadius,
+        paddingHorizontal: components.button.outline.paddingHorizontal,
         textStyle: baseTextStyles.button,
       },
     },
     card: {
-      background: surface.primary,
-      borderRadius: radii.lg,
-      padding: spacing.lg,
+      background: components.card.base.backgroundColor,
+      borderRadius: components.card.base.borderRadius,
+      padding: components.card.base.padding,
       gap: spacing.md,
       shadow: shadows.sm,
-      iconCircle: { size: 40, background: accent[100], color: accent[600] },
-      title: { textStyle: baseTextStyles.headline, color: baseText.primary },
-      subtitle: { textStyle: baseTextStyles.bodySm, color: baseText.secondary },
-      chevron: { color: baseText.tertiary, size: 20 },
+      iconCircle: { size: 40, background: colors.accent[50], color: colors.accent[500] },
+      title: { textStyle: baseTextStyles.h3, color: colors.text.primary },
+      subtitle: { textStyle: baseTextStyles.bodySmall, color: colors.text.secondary },
+      chevron: { color: colors.text.tertiary, size: 20 },
     },
     sectionHeader: {
-      label: { textStyle: baseTextStyles.label, color: baseText.tertiary },
-      rule: { color: border.default, thickness: 1 },
+      label: { textStyle: baseTextStyles.label, color: colors.text.secondary },
+      rule: { color: colors.rule, thickness: 1 },
       gap: spacing.sm,
       marginTop: spacing.xl,
       marginBottom: spacing.md,
     },
     hero: {
-      eyebrow: { textStyle: baseTextStyles.eyebrow, color: accent[600] },
-      display: { textStyle: baseTextStyles.displayLg, color: baseText.primary },
+      eyebrow: { textStyle: baseTextStyles.label, color: colors.text.accent },
+      display: { textStyle: baseTextStyles.display, color: colors.text.primary },
       gap: spacing.xs,
     },
     listRow: {
-      minHeight: 48,
+      minHeight: baseTouchTarget.minHeight,
       paddingVertical: spacing.md,
       gap: spacing.md,
     },
@@ -309,77 +286,74 @@ export const baseTheme: BaseTheme = {
 // Accessible theme — apps/onboarding, exclusively
 // ---------------------------------------------------------------------------
 
-const accessibleText: AccessibleTextColors = {
-  primary: neutral[900],
-  secondary: neutral[600],
-  inverse: WHITE,
+const accessibleColors: ThemeColors<AccessibleTextColors> = {
+  ...accessiblePalette,
+  semantic,
+  ramps,
 };
 
 export const accessibleTheme: AccessibleTheme = {
   name: 'accessible',
-  colors: {
-    background,
-    surface,
-    text: accessibleText,
-    border,
-    accent,
-    semantic,
-    ramps,
-  },
+  colors: accessibleColors,
   spacing,
-  radii,
+  borderRadius,
   shadows,
-  fonts: fontFamilies,
+  typography,
+  fonts,
   textStyles: accessibleTextStyles,
+  components: accessibleComponents,
+  layout,
+  animation,
   touchTarget: accessibleTouchTarget,
   recipes: {
     button: {
       primary: {
         // The AA-audited pair: white text on the first Juniper step >= 4.5:1.
         background: juniper[ACCESSIBLE_BUTTON_FILL_STEP],
-        text: WHITE,
+        text: accessibleColors.text.inverse,
         minHeight: accessibleTouchTarget.minHeight,
-        borderRadius: radii.md,
-        paddingHorizontal: spacing.xl,
+        borderRadius: components.button.primary.borderRadius,
+        paddingHorizontal: components.button.primary.paddingHorizontal,
         textStyle: accessibleTextStyles.button,
       },
       secondary: {
-        background: 'transparent',
-        text: accent[700],
-        borderColor: accent[500],
-        borderWidth: 1.5,
+        background: components.button.outline.backgroundColor,
+        text: colors.accent[700],
+        borderColor: components.button.outline.borderColor,
+        borderWidth: components.button.outline.borderWidth,
         minHeight: accessibleTouchTarget.minHeight,
-        borderRadius: radii.md,
-        paddingHorizontal: spacing.xl,
+        borderRadius: components.button.outline.borderRadius,
+        paddingHorizontal: components.button.outline.paddingHorizontal,
         textStyle: accessibleTextStyles.button,
       },
     },
     card: {
-      background: surface.primary,
-      borderRadius: radii.lg,
-      padding: spacing.xl,
+      background: components.card.base.backgroundColor,
+      borderRadius: components.card.base.borderRadius,
+      // Patient-facing cards breathe: the spec's next step up from `base`.
+      padding: spacing.lg,
       gap: spacing.md,
       shadow: shadows.sm,
-      iconCircle: { size: 48, background: accent[100], color: accent[700] },
-      title: { textStyle: accessibleTextStyles.headline, color: accessibleText.primary },
-      subtitle: { textStyle: accessibleTextStyles.bodySm, color: accessibleText.secondary },
-      chevron: { color: accessibleText.secondary, size: 24 },
+      iconCircle: { size: 48, background: colors.accent[50], color: colors.accent[700] },
+      title: { textStyle: accessibleTextStyles.h3, color: accessibleColors.text.primary },
+      subtitle: { textStyle: accessibleTextStyles.bodySmall, color: accessibleColors.text.secondary },
+      chevron: { color: accessibleColors.text.secondary, size: 24 },
     },
     sectionHeader: {
-      label: { textStyle: accessibleTextStyles.label, color: accessibleText.secondary },
-      rule: { color: border.default, thickness: 1 },
+      label: { textStyle: accessibleTextStyles.label, color: accessibleColors.text.secondary },
+      rule: { color: colors.rule, thickness: 1 },
       gap: spacing.sm,
       marginTop: spacing.xl,
       marginBottom: spacing.md,
     },
     hero: {
-      eyebrow: { textStyle: accessibleTextStyles.eyebrow, color: accent[700] },
-      display: { textStyle: accessibleTextStyles.displayLg, color: accessibleText.primary },
+      eyebrow: { textStyle: accessibleTextStyles.label, color: accessibleColors.text.accent },
+      display: { textStyle: accessibleTextStyles.display, color: accessibleColors.text.primary },
       gap: spacing.xs,
     },
     listRow: {
       minHeight: accessibleTouchTarget.minHeight,
-      paddingVertical: spacing.lg,
+      paddingVertical: spacing.base,
       gap: spacing.md,
     },
   },
@@ -411,14 +385,21 @@ export function accessibleContrastPairs(): ContrastPair[] {
     ['background.primary', t.colors.background.primary],
     ['background.secondary', t.colors.background.secondary],
     ['background.tertiary', t.colors.background.tertiary],
-    ['surface.sunken', t.colors.surface.sunken],
   ];
   const pairs: ContrastPair[] = [];
   for (const [bgName, bg] of bgs) {
     pairs.push({ name: `text.primary on ${bgName}`, fg: text.primary, bg });
     pairs.push({ name: `text.secondary on ${bgName}`, fg: text.secondary, bg });
+    pairs.push({ name: `text.accent on ${bgName}`, fg: text.accent, bg });
+    pairs.push({ name: `ink on ${bgName}`, fg: t.colors.ink, bg });
+    pairs.push({ name: `inkSoft on ${bgName}`, fg: t.colors.inkSoft, bg });
   }
   pairs.push(
+    {
+      name: 'text.inverse on background.dark',
+      fg: text.inverse,
+      bg: t.colors.background.dark,
+    },
     {
       name: 'button.primary text on fill',
       fg: t.recipes.button.primary.text,
@@ -464,6 +445,11 @@ export function accessibleContrastPairs(): ContrastPair[] {
       name: 'card icon on icon circle',
       fg: t.recipes.card.iconCircle.color,
       bg: t.recipes.card.iconCircle.background,
+    },
+    {
+      name: 'input text on components.input.base background',
+      fg: t.components.input.base.color,
+      bg: t.components.input.base.backgroundColor,
     },
     {
       name: 'accent link (accent.700) on background.primary',

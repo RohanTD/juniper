@@ -24,7 +24,9 @@ export function ChoiceCard({ title, subtitle, selected, onPress }: ChoiceCardPro
       onPress={onPress}
       style={({ pressed }) => ({
         backgroundColor: selected ? theme.colors.accent[50] : card.background,
-        borderColor: selected ? theme.colors.accent[500] : theme.colors.border.default,
+        // `rule` is the only hairline color in the system; selection swaps it
+        // for the brand step rather than introducing a second gray.
+        borderColor: selected ? theme.colors.accent[500] : theme.colors.rule,
         borderWidth: 2,
         borderRadius: card.borderRadius,
         padding: card.padding,
@@ -33,12 +35,12 @@ export function ChoiceCard({ title, subtitle, selected, onPress }: ChoiceCardPro
         opacity: pressed ? 0.9 : 1,
       })}
     >
-      <View style={{ gap: theme.spacing.xxs }}>
-        <ThemedText variant="headline" color={card.title.color}>
+      <View style={{ gap: theme.spacing.xs }}>
+        <ThemedText variant="h3" color={card.title.color}>
           {title}
         </ThemedText>
         {subtitle ? (
-          <ThemedText variant="bodySm" color={card.subtitle.color}>
+          <ThemedText variant="bodySmall" color={card.subtitle.color}>
             {subtitle}
           </ThemedText>
         ) : null}

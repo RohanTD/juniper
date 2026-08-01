@@ -25,7 +25,7 @@ export default function Alerts() {
 
   return (
     <Screen>
-      <ThemedText variant="title" style={{ marginTop: theme.spacing.lg }}>
+      <ThemedText variant="h1" style={{ marginTop: theme.spacing.base }}>
         Alerts
       </ThemedText>
       <ThemedText variant="body" color={theme.colors.text.secondary}>

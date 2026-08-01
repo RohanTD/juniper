@@ -36,11 +36,11 @@ function SectionHeader({ title }: { title: string }) {
 function Row({ label, value }: { label: string; value: string }) {
   const theme = useTheme();
   return (
-    <View style={{ gap: theme.spacing.xxs, paddingVertical: theme.spacing.xs }}>
+    <View style={{ gap: theme.spacing.xs, paddingVertical: theme.spacing.xs }}>
       <ThemedText variant="caption" color={theme.colors.text.secondary}>
         {label}
       </ThemedText>
-      <ThemedText variant="bodyLg">{value}</ThemedText>
+      <ThemedText variant="bodyLarge">{value}</ThemedText>
     </View>
   );
 }

@@ -44,7 +44,7 @@ export default function CheckInDetail() {
         </ThemedText>
       </Pressable>
 
-      <ThemedText variant="title">Check-in summary</ThemedText>
+      <ThemedText variant="h1">Check-in summary</ThemedText>
 
       {summary.loading ? (
         <ThemedText variant="body" color={theme.colors.text.secondary}>
@@ -64,7 +64,7 @@ export default function CheckInDetail() {
         <View
           style={{
             backgroundColor: theme.colors.background.primary,
-            borderRadius: theme.radii.lg,
+            borderRadius: theme.borderRadius.lg,
             padding: theme.spacing.xl,
             gap: theme.spacing.md,
           }}
@@ -74,7 +74,7 @@ export default function CheckInDetail() {
             .split(/\n{2,}/)
             .filter((paragraph) => paragraph.trim() !== '')
             .map((paragraph) => (
-              <ThemedText key={paragraph.slice(0, 40)} variant="bodyLg">
+              <ThemedText key={paragraph.slice(0, 40)} variant="bodyLarge">
                 {paragraph.trim()}
               </ThemedText>
             ))}

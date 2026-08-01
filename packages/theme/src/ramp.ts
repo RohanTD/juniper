@@ -1,10 +1,10 @@
 /**
  * 10-step color ramp generator.
  *
- * The Thoracle theme's ramps are 10 steps (50..900) with the brand color at
- * 500. The port's mandate: given a single brand hex, generate all ten steps
- * with a perceptually sensible lightness ladder — not an HSL lighten/darken
- * hack. This generator works in OKLCH:
+ * THEME_SYSTEM.md's ramps are 10 steps (50..900) with the brand color at 500.
+ * Quick-start step 3 is explicit that a new app must *generate* all ten steps
+ * from its brand hex rather than swapping only the 500 step. This generator
+ * does that in OKLCH:
  *
  *  - Lightness: steps 50..400 interpolate from a near-white anchor (0.965)
  *    down to the brand's own OKLab lightness; steps 600..900 interpolate from
@@ -23,6 +23,14 @@ import { hexToOklch, oklchToHex } from './color';
 export type RampStep = 50 | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900;
 
 export type ColorRamp = Readonly<Record<RampStep, string>>;
+
+/**
+ * The neutral ramp in THEME_SYSTEM.md section 2 carries an extra `0: '#FFFFFF'`
+ * step that no other ramp has.
+ */
+export type NeutralRampStep = 0 | RampStep;
+
+export type NeutralRamp = Readonly<Record<NeutralRampStep, string>>;
 
 export const RAMP_STEPS: readonly RampStep[] = [
   50, 100, 200, 300, 400, 500, 600, 700, 800, 900,

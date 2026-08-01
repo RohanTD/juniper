@@ -1,9 +1,10 @@
 /**
  * @juniper/theme — the Thoracle theme system, ported for Juniper.
  *
- * See THEME_SYSTEM.md (in this package) for the canonical spec, including the
- * two porting changes: the generated Juniper brand ramp and the accessible
- * variant for patient-facing surfaces.
+ * THEME_SYSTEM.md (in this package) is the authoritative spec. Sections 2–8 are
+ * ported verbatim; the "Juniper porting notes" section at its foot lists the
+ * only permitted deviations (the generated Juniper brand ramp, the accessible
+ * variant for patient-facing surfaces, and the line-height clarification).
  */
 export {
   contrastRatio,
@@ -18,39 +19,76 @@ export {
   type Oklch,
   type Rgb,
 } from './color';
-export { generateRamp, RAMP_STEPS, type ColorRamp, type RampStep } from './ramp';
+export {
+  generateRamp,
+  RAMP_STEPS,
+  type ColorRamp,
+  type NeutralRamp,
+  type NeutralRampStep,
+  type RampStep,
+} from './ramp';
 export {
   accent,
   error,
-  info,
   juniper,
   JUNIPER_500,
   neutral,
   persimmon,
+  primary,
   ramps,
+  secondary,
   success,
   warning,
   type RampName,
 } from './ramps';
 export {
+  accessiblePalette,
+  accessibleText,
+  background,
+  colors,
+  ink,
+  inkSoft,
+  rule,
+  text,
+  type AccessibleTextColors,
+  type BackgroundColors,
+  type PaletteColors,
+  type TextColors,
+} from './colors';
+export {
   accessibleTextStyles,
-  accessibleTouchTarget,
   baseTextStyles,
-  baseTouchTarget,
-  fontFamilies,
-  radii,
+  fonts,
+  letterSpacing,
+  lineHeights,
   resolveTextStyle,
-  shadows,
-  spacing,
-  type RadiusToken,
+  sizes,
+  typography,
+  type FontToken,
+  type LetterSpacingToken,
+  type LineHeightToken,
   type ResolvedTextStyle,
-  type ShadowToken,
-  type SpacingToken,
+  type SizeToken,
   type TextStyleName,
   type TextStyles,
   type TextStyleToken,
+} from './typography';
+export {
+  accessibleTouchTarget,
+  animation,
+  baseTouchTarget,
+  borderRadius,
+  layout,
+  shadows,
+  spacing,
+  type BorderRadiusToken,
+  type ShadowName,
+  type ShadowToken,
+  type SpacingToken,
   type TouchTargetToken,
 } from './tokens';
+export { accessibleComponents, components, type Components } from './components';
+export { theme, type SpecTheme } from './theme';
 export {
   ACCESSIBLE_BUTTON_FILL_STEP,
   accessibleContrastPairs,
@@ -58,9 +96,7 @@ export {
   baseTheme,
   firstAccessibleFillStep,
   themes,
-  type AccessibleTextColors,
   type AccessibleTheme,
-  type BaseTextColors,
   type BaseTheme,
   type ButtonRecipe,
   type CardRecipe,
@@ -72,6 +108,7 @@ export {
   type SemanticColors,
   type SemanticColorSet,
   type Theme,
+  type ThemeColors,
   type ThemeVariant,
 } from './themes';
 export { ThemeProvider, useTheme, type ThemeProviderProps } from './provider';

@@ -57,12 +57,12 @@ export default function Welcome() {
 
   return (
     <Screen>
-      <View style={{ flex: 1, justifyContent: 'center', gap: theme.spacing.lg }}>
-        <ThemedText variant="eyebrow" color={theme.recipes.hero.eyebrow.color}>
+      <View style={{ flex: 1, justifyContent: 'center', gap: theme.spacing.base }}>
+        <ThemedText variant="label" color={theme.recipes.hero.eyebrow.color}>
           Juniper
         </ThemedText>
-        <ThemedText variant="displayLg">A friendly check-in call, made just for you.</ThemedText>
-        <ThemedText variant="bodyLg" color={theme.colors.text.secondary}>
+        <ThemedText variant="display">A friendly check-in call, made just for you.</ThemedText>
+        <ThemedText variant="bodyLarge" color={theme.colors.text.secondary}>
           Juniper calls to chat, see how you are doing, and keep your care team in the loop. This
           short setup takes about five minutes, and you will never need this app again afterward.
         </ThemedText>

@@ -31,7 +31,7 @@ export function AlertCard({ task }: { task: Task }) {
           style={{
             width: circleSize,
             height: circleSize,
-            borderRadius: theme.radii.pill,
+            borderRadius: theme.borderRadius.full,
             backgroundColor: theme.colors.background.primary,
             alignItems: 'center',
             justifyContent: 'center',
@@ -43,11 +43,11 @@ export function AlertCard({ task }: { task: Task }) {
             color={semantic.icon}
           />
         </View>
-        <View style={{ flex: 1, gap: theme.spacing.xxs }}>
-          <ThemedText variant="headline" color={semantic.fgOnBg}>
+        <View style={{ flex: 1, gap: theme.spacing.xs }}>
+          <ThemedText variant="h3" color={semantic.fgOnBg}>
             {resolved ? 'Resolved concern' : 'Urgent concern'}
           </ThemedText>
-          <ThemedText variant="bodySm" color={semantic.fgOnBg}>
+          <ThemedText variant="bodySmall" color={semantic.fgOnBg}>
             {alertWhen(task)}
           </ThemedText>
         </View>
@@ -55,7 +55,7 @@ export function AlertCard({ task }: { task: Task }) {
       <ThemedText variant="body" color={semantic.fgOnBg}>
         {task.description ?? 'No details were recorded for this alert.'}
       </ThemedText>
-      <ThemedText variant="bodySm" color={semantic.fgOnBg}>
+      <ThemedText variant="bodySmall" color={semantic.fgOnBg}>
         {alertStatusLine(task)}
       </ThemedText>
     </View>

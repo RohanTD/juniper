@@ -44,7 +44,7 @@ export function Card({ icon, title, subtitle, onPress, iconColor, iconBackground
         style={{
           width: circleSize,
           height: circleSize,
-          borderRadius: theme.radii.pill,
+          borderRadius: theme.borderRadius.full,
           backgroundColor: iconBackground ?? recipe.iconCircle.background,
           alignItems: 'center',
           justifyContent: 'center',
@@ -56,12 +56,12 @@ export function Card({ icon, title, subtitle, onPress, iconColor, iconBackground
           color={iconColor ?? recipe.iconCircle.color}
         />
       </View>
-      <View style={{ flex: 1, gap: theme.spacing.xxs }}>
-        <ThemedText variant="headline" color={recipe.title.color}>
+      <View style={{ flex: 1, gap: theme.spacing.xs }}>
+        <ThemedText variant="h3" color={recipe.title.color}>
           {title}
         </ThemedText>
         {subtitle ? (
-          <ThemedText variant="bodySm" color={recipe.subtitle.color}>
+          <ThemedText variant="bodySmall" color={recipe.subtitle.color}>
             {subtitle}
           </ThemedText>
         ) : null}

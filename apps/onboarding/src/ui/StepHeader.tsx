@@ -22,7 +22,7 @@ export function StepHeader({ step, title, hint }: StepHeaderProps) {
       <ThemedText variant="label" color={theme.recipes.sectionHeader.label.color}>
         {`Question ${index} of ${total}`}
       </ThemedText>
-      <ThemedText variant="title">{title}</ThemedText>
+      <ThemedText variant="h1">{title}</ThemedText>
       {hint ? (
         <ThemedText variant="body" color={theme.colors.text.secondary}>
           {hint}
