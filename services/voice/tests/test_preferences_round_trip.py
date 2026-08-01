@@ -164,3 +164,65 @@ def test_preference_tools_are_offered_to_the_companion(tmp_path, provider):
     )
     tool_names = {tool["name"] for tool in provider.requests_for("companion")[0].tools}
     assert {"update_call_windows", "add_topic_to_avoid"} <= tool_names
+
+
+# ---------------------------------------------------------------------------
+# Per-patient authorization (the family app calls this with a caregiver token)
+# ---------------------------------------------------------------------------
+
+async def test_caregiver_token_is_scoped_to_their_patient(tmp_path, provider, monkeypatch):
+    """The route is keyed only on a path parameter, so without per-patient
+    authorization the shared service token would be a master key the moment a
+    caregiver-facing app holds it. A Medplum user token must therefore be
+    scoped by asking Medplum whether that user can read THIS patient."""
+    import httpx as _httpx
+
+    from juniper_voice.app import create_app
+    from juniper_voice.config import Settings
+
+    ALLOWED, DENIED = "pat-allowed", "pat-denied"
+
+    class _FakeResponse:
+        def __init__(self, status_code: int):
+            self.status_code = status_code
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, headers=None):
+            # Medplum answers the entitlement question: the caregiver policy
+            # scopes them to exactly their bound patient.
+            return _FakeResponse(200 if url.endswith(ALLOWED) else 403)
+
+    monkeypatch.setattr(_httpx, "AsyncClient", _FakeClient)
+
+    settings = Settings(
+        api_token="service-token",
+        medplum_base_url="https://medplum.example",
+        preferences_path=str(tmp_path / "p.json"),
+        context_brain_path=str(tmp_path / "b.json"),
+    )
+    app = create_app(settings=settings, provider=provider, medplum=None)
+    with TestClient(app) as client:
+        caregiver = {"Authorization": "Bearer caregiver-medplum-token"}
+        assert client.get(f"/patients/{ALLOWED}/preferences", headers=caregiver).status_code == 200
+        # ...and cannot reach another patient by editing the URL.
+        assert client.get(f"/patients/{DENIED}/preferences", headers=caregiver).status_code == 403
+        assert (
+            client.put(
+                f"/patients/{DENIED}/preferences", json={"callWindows": []}, headers=caregiver
+            ).status_code
+            == 403
+        )
+        # The service token stays trusted for any patient (onboarding path).
+        svc = {"Authorization": "Bearer service-token"}
+        assert client.get(f"/patients/{DENIED}/preferences", headers=svc).status_code == 200
+        # No token at all is rejected outright.
+        assert client.get(f"/patients/{ALLOWED}/preferences").status_code == 401

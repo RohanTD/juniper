@@ -11,7 +11,7 @@
 import { categoryToken, TASK_CATEGORY } from '@juniper/terminology';
 import type { Task } from '@medplum/fhirtypes';
 import { useMedplum, useSubscription } from '@medplum/react-hooks';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -56,8 +56,33 @@ export function useAlerts(patientRef: string | undefined): AlertsState {
 
   // Live arrival. The subscription criteria mirror the polled query; on any
   // matching event we simply re-run the canonical search.
+  //
+  // Subscriptions are a BEST-EFFORT upgrade over the polling above, never a
+  // requirement. Medplum's WebSocket subscriptions need access to the
+  // Subscription resource, which the caregiver AccessPolicy deliberately does
+  // not grant — it is a strict allow-list of Patient / RelatedPerson /
+  // Encounter / Task / DocumentReference / Binary. Without an onError handler
+  // the failed bind surfaced as an unhandled "Forbidden" console error on
+  // every refresh cycle, which looks like a broken app even though alerts
+  // were arriving fine on the 60s poll.
+  //
+  // If live delivery is wanted later, the fix is a deliberate access-model
+  // decision (granting caregivers Subscription access), not a client change —
+  // so this degrades quietly and says so once.
   const criteria = `Task?patient=${patientRef ?? 'Patient/none'}&code=${categoryToken(TASK_CATEGORY.escalation)}`;
-  useSubscription(criteria, refresh);
+  const warnedRef = useRef(false);
+  useSubscription(criteria, refresh, {
+    onError: (err) => {
+      if (!warnedRef.current) {
+        warnedRef.current = true;
+        console.info(
+          '[juniper] live alert subscription unavailable for this account; ' +
+            `falling back to ${POLL_INTERVAL_MS / 1000}s polling.`,
+          err
+        );
+      }
+    },
+  });
 
   return { tasks, loading, error, refresh };
 }

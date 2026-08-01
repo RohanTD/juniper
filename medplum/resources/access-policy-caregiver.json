@@ -26,6 +26,11 @@
       "resourceType": "DocumentReference",
       "readonly": true,
       "criteria": "DocumentReference?subject=%patient&category=https://juniper.health/fhir/CodeSystem/note-category|juniper-family-summary"
+    },
+    {
+      "resourceType": "Binary",
+      "readonly": true,
+      "_comment": "No criteria \u2014 Medplum cannot filter Binary by search criteria. Access is governed by securityContext inheritance instead: a Binary is readable only if the caller can read the resource its securityContext points at. Every Binary the voice service writes carries securityContext -> its owning DocumentReference, so a caregiver reads family-summary binaries and is denied note/transcript binaries (verified live 2026-08-01: family summary 200, clinical note 404). WITHOUT this entry Medplum returns a bare 'Binary/<id>' instead of a presigned URL and the family app cannot read summary text at all."
     }
   ]
 }

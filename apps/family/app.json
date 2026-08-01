@@ -6,7 +6,6 @@
     "scheme": "juniper-family",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
     },
@@ -14,6 +13,9 @@
       "bundler": "metro",
       "output": "single"
     },
-    "plugins": ["expo-router", "expo-secure-store"]
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ]
   }
 }

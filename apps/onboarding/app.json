@@ -6,14 +6,17 @@
     "scheme": "juniper-onboarding",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rtdharia.juniper-onboarding"
     },
     "web": {
       "bundler": "metro",
       "output": "single"
     },
-    "plugins": ["expo-router", "expo-secure-store"]
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ]
   }
 }

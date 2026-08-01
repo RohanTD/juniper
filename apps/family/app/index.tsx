@@ -87,6 +87,12 @@ export default function Summary() {
           subtitle="Concerns raised and what happened next"
           onPress={() => router.push('/alerts')}
         />
+        <Card
+          icon="clock"
+          title="Call settings"
+          subtitle="When Juniper calls, and topics to avoid"
+          onPress={() => router.push('/preferences')}
+        />
       </View>
     </Screen>
   );
