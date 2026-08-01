@@ -8,25 +8,33 @@
  * to 1040px above 900px; `Columns` and `TileRow` do the rest).
  *
  * Reading order top to bottom is deliberately the order of a caregiver's
- * questions:
+ * questions, and each band earns its place by answering one:
  *
- * 1. **Status hero** — the one-sentence answer, with a semantic pill. This is
- *    the screen that earns the theme's serif/mono signature.
- * 2. **Stat tiles** — the four facts a glance should settle: calls this month,
- *    last call, next call, open alerts. Counts and dates, never trends: writes
- *    are limited to notes, so there is no structured data behind a chart and
- *    mocking one is explicitly rejected in PLAN.md.
- * 3. **Anything urgent**, rendered in full and at the FULL measure — not a
- *    "1 alert" chip that hides the context. PLAN.md: an alert without context
- *    and without someone to contact is worse than useless, and squeezing it
- *    into a column would be the same mistake in a smaller font.
- * 4. **Two columns.** Left, the things you read: the recent check-in timeline
- *    INLINE rather than behind a tap, since "what did they talk about" is the
- *    second question and a tap to find out is a tap too many. Right, the things
- *    you glance at: next call, care team, and the way into settings.
+ * 1. **How is she?** — the status hero: one sentence and a semantic pill. This
+ *    is the screen that earns the theme's serif/mono signature.
+ * 2. **Does anything need me right now?** — unseen alerts, rendered in full and
+ *    at the FULL measure. Not a "1 alert" chip that hides the context, and
+ *    deliberately ABOVE the statistics: an alert raised at 11pm must not sit
+ *    underneath "calls this month". PLAN.md is explicit that an alert without
+ *    context and without someone to contact is worse than useless, and putting
+ *    it below a row of counts is the same mistake by a different route.
+ * 3. **The facts at a glance** — four tiles: calls this month, last call, next
+ *    call, open alerts. Counts and dates, never trends: writes are limited to
+ *    notes, so there is no structured data behind a chart and mocking one is
+ *    explicitly rejected in PLAN.md.
+ * 4. **So what do I do about it?** — family guidance, also at the full measure.
+ *    Everything above reports state and everything below reports history; this
+ *    is the only band that suggests an action, and burying it in a column would
+ *    make the question the product exists to answer the easiest thing to skip.
+ * 5. **What's been happening, and who do I call?** — two columns. Left, the
+ *    things you read: the check-in timeline INLINE rather than behind a tap,
+ *    since "what did they talk about" is the next question and a tap to find
+ *    out is a tap too many. Right, the things you glance at: next call, care
+ *    team, and the way into settings.
  *
- * On a phone the columns collapse and the side column comes FIRST, because
- * "what's coming up" four scrolls below a timeline is not an answer.
+ * On a phone the columns collapse in place. The side column no longer needs to
+ * jump ahead of the timeline — "what's coming up" is already answered by a tile
+ * four bands above it.
  */
 import { useTheme } from '@juniper/theme';
 import { Redirect, router } from 'expo-router';
@@ -208,28 +216,10 @@ export default function Dashboard() {
       </View>
     );
 
-  // Everything open has been seen. Say so rather than rendering nothing, which
-  // would be indistinguishable from "no alerts have ever been raised".
-  const allSeen =
-    unseen.length === 0 && open.length > 0 ? (
-      <View>
-        <SectionHeader title="Needs attention" />
-        <ThemedText variant="body" color={theme.colors.text.secondary}>
-          {open.length === 1
-            ? 'You’ve seen the one open alert. It stays with the care team until they close it — it’s on the alerts page whenever you want it.'
-            : `You’ve seen all ${open.length} open alerts. They stay with the care team until closed — they’re on the alerts page whenever you want them.`}
-        </ThemedText>
-      </View>
-    ) : null;
 
   // ---- left column: what you read ----------------------------------------
   const main = (
     <View>
-        {/* Above the timeline on purpose. The timeline reports what happened;
-            this is the only part of the page that answers "so what do I do?",
-            and a caregiver who scrolls past it has been failed by the layout. */}
-        <GuidanceCard state={guidance} firstName={firstName} />
-
         <SectionHeader title="Recent check-ins" />
         {checkIns.loading ? (
           <ThemedText variant="body" color={theme.colors.text.secondary}>
@@ -306,6 +296,11 @@ export default function Dashboard() {
         </ThemedText>
       </Hero>
 
+      {/* Before the statistics, not after. An alert raised at 11pm must not
+          sit underneath "calls this month" — urgency outranks summary, and
+          this is the one band on the page that can require action tonight. */}
+      {urgent}
+
       <TileRow>
         <StatTile
           label="Calls this month"
@@ -329,17 +324,22 @@ export default function Dashboard() {
             open.length === 0
               ? 'Nothing needs attention'
               : unseen.length === 0
-                ? 'All seen by you'
+                ? // With the attention band empty, this line is the only thing
+                  // distinguishing "you have read them all" from "none exist".
+                  'You’ve seen them all — still open with the care team'
                 : `${unseen.length} not yet seen by you`
           }
           valueColor={open.length > 0 ? theme.colors.semantic.error.text : undefined}
         />
       </TileRow>
 
-      {urgent}
-      {allSeen}
+      {/* Full measure, like the alerts above it. Everything below reports what
+          HAPPENED; this is the only part of the page that answers "so what do
+          I do about it?", and burying it in a column would make the question
+          the dashboard exists to answer the easiest thing to scroll past. */}
+      <GuidanceCard state={guidance} firstName={firstName} />
 
-      <Columns main={main} side={side} narrowOrder="side-first" />
+      <Columns main={main} side={side} />
     </Screen>
   );
 }
