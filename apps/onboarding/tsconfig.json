@@ -3,5 +3,9 @@
   "compilerOptions": {
     "strict": true
   },
-  "include": ["app", "src", "__tests__", "expo-env.d.ts"]
+  "include": [
+    "app",
+    "src",
+    "__tests__"
+  ]
 }
