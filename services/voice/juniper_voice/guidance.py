@@ -54,12 +54,15 @@ water pill".
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
 
 from .llm.provider import LLMProvider
 from .terminology import Terminology
+
+logger = logging.getLogger("juniper.guidance")
 
 #: How many calls of evidence before a pattern may be claimed.  One call is an
 #: anecdote; presenting it as a trend to an anxious family member is the exact
@@ -435,15 +438,27 @@ async def generate_guidance(
         model=model,
         system=system,
         messages=[{"role": "user", "content": prompt}],
+        # The default 1024 is not enough. The input is up to GUIDANCE_WINDOW
+        # whole call notes, and the reply is structured JSON — truncation lands
+        # mid-object, the parse fails, and the caregiver is told Juniper
+        # "couldn't put suggestions together", which is true but describes a
+        # budget rather than the model having nothing to say. The documentation
+        # pass on the same input is given 4000 for the same reason.
+        max_tokens=2000,
     )
-    try:
-        payload = json.loads(_strip_code_fence(response.text))
-        raw = payload.get("suggestions", []) if isinstance(payload, Mapping) else []
-    except (json.JSONDecodeError, AttributeError):
+    payload = _parse_payload(response.text)
+    if payload is None:
+        # Log the head of what came back: a parse failure is either truncation
+        # or a model ignoring the format, and those want different fixes.
+        logger.warning(
+            "guidance response did not parse as JSON; first 200 chars: %r",
+            (response.text or "")[:200],
+        )
         return Guidance(
             calls_considered=calls_considered,
             unavailable_reason="Juniper couldn't put suggestions together this time.",
         )
+    raw = payload.get("suggestions", [])
 
     kept, rejected = sanitize_suggestions(
         raw if isinstance(raw, list) else [],
@@ -459,8 +474,39 @@ async def generate_guidance(
 
 
 def _strip_code_fence(text: str) -> str:
-    stripped = text.strip()
+    stripped = (text or "").strip()
     if stripped.startswith("```"):
         stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
         stripped = re.sub(r"\s*```$", "", stripped)
     return stripped
+
+
+def _parse_payload(text: str) -> Mapping[str, Any] | None:
+    """The response as an object, or None if it cannot be read as one.
+
+    Tolerant on purpose. A model that has been told to return JSON usually
+    does, but "usually" wrapped in a code fence, or with a sentence of
+    preamble, or both — and a strict parse turns any of those into "Juniper
+    couldn't put suggestions together" for a caregiver. So: try the whole
+    string, then try the outermost braces.
+
+    Tolerant about *shape*, never about content: everything inside still goes
+    through sanitize_suggestions, which is where the safety rules live.
+    """
+    candidate = _strip_code_fence(text)
+    for attempt in (candidate, _outermost_object(candidate)):
+        if not attempt:
+            continue
+        try:
+            parsed = json.loads(attempt)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, Mapping):
+            return parsed
+    return None
+
+
+def _outermost_object(text: str) -> str | None:
+    start = text.find("{")
+    end = text.rfind("}")
+    return text[start : end + 1] if 0 <= start < end else None

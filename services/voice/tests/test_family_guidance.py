@@ -327,3 +327,52 @@ async def test_the_serialized_document_never_leaks_rejections():
 def test_the_window_is_wider_than_the_evidence_threshold():
     # Otherwise a pattern could never be established within one window.
     assert GUIDANCE_WINDOW > MIN_CALLS_FOR_PATTERN
+
+
+# ---------------------------------------------------------------------------
+# Response parsing — tolerant about shape, never about content
+# ---------------------------------------------------------------------------
+
+
+async def test_a_preamble_before_the_json_does_not_lose_the_suggestions():
+    """Models add "Here's the JSON:" and a strict parse turned that into
+    "Juniper couldn't put suggestions together" for a caregiver."""
+    provider = FakeProvider(
+        {"guidance": ["Here are my suggestions:\n" + json.dumps({"suggestions": [good()]})]}
+    )
+    guidance = await run(provider)
+    assert len(guidance.suggestions) == 1
+
+
+async def test_trailing_prose_after_the_json_is_tolerated():
+    provider = FakeProvider(
+        {"guidance": [json.dumps({"suggestions": [good()]}) + "\n\nLet me know if you'd like more."]}
+    )
+    guidance = await run(provider)
+    assert len(guidance.suggestions) == 1
+
+
+async def test_truncated_json_still_degrades_gracefully():
+    """What a too-small token budget actually produces: a cut-off object. It
+    must read as "nothing this time", never as a crash."""
+    cut = json.dumps({"suggestions": [good()]})[:40]
+    provider = FakeProvider({"guidance": [cut]})
+    guidance = await run(provider)
+    assert guidance.suggestions == ()
+    assert guidance.unavailable_reason
+
+
+async def test_a_json_array_is_not_mistaken_for_the_envelope():
+    # The contract is an object with a `suggestions` key. A bare array is not
+    # that, and guessing at it would be inventing structure.
+    provider = FakeProvider({"guidance": [json.dumps([good()])]})
+    guidance = await run(provider)
+    assert guidance.suggestions == ()
+
+
+async def test_the_guidance_call_asks_for_enough_room_to_answer():
+    """The default 1024 truncated the reply mid-object on real input."""
+    provider = FakeProvider({"guidance": [json.dumps({"suggestions": []})]})
+    await run(provider)
+    request = provider.requests_for("guidance")[0]
+    assert request.max_tokens >= 2000

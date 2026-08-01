@@ -80,46 +80,62 @@ export function decodeBase64(base64: string): string {
 }
 
 /**
+ * Fetch a Binary's content through the FHIR API, with the caller's own token.
+ *
+ * `GET /fhir/R4/Binary/<id>` returns the stored bytes, not a FHIR resource, so
+ * this reads the body as text rather than parsing JSON — the same trap that
+ * raised "Expecting value: line 1 column 1" on the Python side.
+ */
+async function readBinaryViaApi(medplum: MedplumClient, id: string): Promise<string> {
+  const base = medplum.getBaseUrl().replace(/\/+$/, '');
+  const token = medplum.getAccessToken();
+  const response = await fetch(`${base}/fhir/R4/Binary/${id}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to read Binary/${id}: HTTP ${response.status}`);
+  }
+  return response.text();
+}
+
+/**
  * Read the text content behind a Binary attachment URL.
  *
- * A presigned URL is fetched **directly**, and deliberately first. That link
- * is the mechanism the whole caregiver access model rests on: Medplum cannot
- * scope `Binary` by search criteria, so family-summary content reaches a
- * caregiver through the presigned URL attached to a DocumentReference they are
- * allowed to read (see medplum/README.md). It carries its own signature, needs
- * no Authorization header, and costs one round trip instead of two.
+ * **The API first, the presigned link second** — and that order is load-bearing
+ * on the web. Medplum's CDN serves presigned URLs without an
+ * `Access-Control-Allow-Origin` header, so a browser blocks the request
+ * outright:
  *
- * The `Binary/<id>` path remains for callers holding a bare FHIR reference,
- * and doubles as the fallback when a presigned link cannot be fetched —
- * expired signature, or a runtime that blocks the cross-origin GET.
+ *     Access to fetch at 'https://storage.medplum.com/binary/…' from origin
+ *     'http://localhost:8081' has been blocked by CORS policy
+ *
+ * Fetching the signed link first therefore cost a guaranteed failure on every
+ * summary before falling back. Going through the API instead reuses the origin
+ * the client already talks to, carries the caller's token, and is subject to
+ * the same AccessPolicy as everything else — a caregiver can read a
+ * family-summary Binary because its securityContext points at a document they
+ * may read, and is refused a clinical note's for the same reason.
+ *
+ * The presigned link stays as the fallback: native runtimes have no CORS to
+ * answer to, and it still works where a token is unavailable.
  */
 export async function readBinaryText(medplum: MedplumClient, url: string): Promise<string> {
-  if (isPresignedUrl(url)) {
+  const id = binaryIdFromUrl(url);
+  if (id) {
     try {
-      const response = await fetch(url);
-      if (response.ok) {
-        return await response.text();
-      }
+      return await readBinaryViaApi(medplum, id);
     } catch {
-      // Fall through to the authenticated read below rather than failing: a
-      // signature can expire, and some runtimes refuse the cross-origin GET.
+      // Fall through to the signed link rather than failing outright.
     }
   }
 
-  const id = binaryIdFromUrl(url);
-  if (!id) {
-    throw new Error(`Not a Binary attachment URL: ${url}`);
-  }
-  const binary = await medplum.readResource('Binary', id);
-  if (binary.data) {
-    return decodeBase64(binary.data);
-  }
-  if (binary.url) {
-    const response = await fetch(binary.url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch Binary content: HTTP ${response.status}`);
+  if (isPresignedUrl(url)) {
+    const response = await fetch(url);
+    if (response.ok) {
+      return response.text();
     }
-    return response.text();
+    throw new Error(`Failed to fetch Binary content: HTTP ${response.status}`);
   }
-  return '';
+
+  throw new Error(`Not a Binary attachment URL: ${url}`);
 }
