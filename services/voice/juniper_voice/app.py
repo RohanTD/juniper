@@ -189,10 +189,12 @@ def create_app(
     # perfectly healthy while "call settings" never loads, because the request
     # never arrived. Origins are an explicit allow-list, never "*" — see
     # Settings.cors_origins.
-    if settings.cors_origins:
+    if settings.cors_origins or settings.cors_origin_regex:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=list(settings.cors_origins),
+            # Expo's host and port vary run to run; see Settings.cors_origin_regex.
+            allow_origin_regex=settings.cors_origin_regex,
             allow_methods=["GET", "PUT", "POST", "OPTIONS"],
             allow_headers=["authorization", "content-type"],
             # No cookies are used; entitlement rides on the bearer token, so

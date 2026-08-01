@@ -101,6 +101,21 @@ export abstract class VoiceApiClient {
       if (controller.signal.aborted) {
         throw new VoiceApiError(0, `${label} timed out after ${this.timeoutMs}ms`);
       }
+      // A fetch that THROWS never reached the service: the browser refused to
+      // send it (cross-origin), or nothing was listening. Both surface to the
+      // user as the same sentence, so log what was actually attempted —
+      // without this the only clue was "we could not reach the Juniper
+      // service", which is equally true of a dead server and a blocked one.
+      const origin = typeof location !== 'undefined' ? location.origin : 'native';
+      console.error(
+        `[juniper] ${label} never reached the service.\n` +
+          `  from origin: ${origin}\n` +
+          `  to:          ${url}\n` +
+          '  Either the voice service is not running, or that origin is not allowed by ' +
+          'JUNIPER_CORS_ORIGINS / JUNIPER_CORS_ORIGIN_REGEX. A browser blocks a ' +
+          'disallowed origin before the request leaves, so the service log stays empty.',
+        error
+      );
       throw error;
     } finally {
       clearTimeout(timer);

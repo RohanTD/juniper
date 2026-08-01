@@ -112,10 +112,62 @@ def test_an_explicitly_empty_value_disables_cors_rather_than_falling_back():
     assert _origins("", ("http://localhost:8081",)) == ()
 
 
-def test_no_cors_middleware_when_the_list_is_empty(app_factory):
-    client = TestClient(app_factory(cors_origins=()))
+def test_no_cors_middleware_when_everything_is_disabled(app_factory):
+    client = TestClient(app_factory(cors_origins=(), cors_origin_regex=None))
     response = client.get(
         "/patients/pat-1/preferences",
         headers={"Origin": DEV_ORIGIN, "Authorization": "Bearer test-token"},
     )
     assert "access-control-allow-origin" not in response.headers
+
+
+# ---------------------------------------------------------------------------
+# The dev origin pattern
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://localhost:8081",
+        "http://localhost:8082",
+        # Expo walks upward when a port is taken, so the list can never be fixed.
+        "http://localhost:8099",
+        "http://127.0.0.1:8081",
+        # Expo serves the same app on the machine's LAN address so a phone can
+        # reach it. Opening THAT url in a browser is a different Origin, and it
+        # is the one that actually bit us.
+        "http://172.20.10.3:8081",
+        "http://192.168.1.42:19006",
+        "http://10.0.0.7:8081",
+    ],
+)
+def test_every_shape_an_expo_dev_server_takes_is_allowed(app_factory, origin):
+    client = TestClient(app_factory())
+    response = client.get(
+        "/patients/pat-1/preferences",
+        headers={"Origin": origin, "Authorization": "Bearer test-token"},
+    )
+    assert response.headers.get("access-control-allow-origin") == origin
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://evil.example",
+        "http://evil.example",
+        # Public IPs are not private ranges — the pattern must not match them.
+        "http://8.8.8.8:8081",
+        "http://172.15.0.1:8081",
+        "http://172.32.0.1:8081",
+        # A hostname that merely CONTAINS localhost must not pass.
+        "http://localhost.evil.example",
+    ],
+)
+def test_the_pattern_does_not_open_the_door_to_the_public_internet(app_factory, origin):
+    client = TestClient(app_factory())
+    response = client.get(
+        "/patients/pat-1/preferences",
+        headers={"Origin": origin, "Authorization": "Bearer test-token"},
+    )
+    assert response.headers.get("access-control-allow-origin") != origin

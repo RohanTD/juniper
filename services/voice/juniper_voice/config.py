@@ -106,6 +106,28 @@ class Settings:
         "http://localhost:8082",
         "http://localhost:19006",
     )
+    #: Origin *pattern*, for development only.
+    #:
+    #: A fixed port list does not survive contact with Expo. It picks a free
+    #: port (8081, then 8082, then upward when one is taken), it serves the
+    #: same app on ``localhost`` AND on the machine's LAN address so a phone
+    #: can reach it, and either of those is a different Origin. The result was
+    #: a browser that blocked the request before it left, surfacing in the app
+    #: as "we could not reach the Juniper service" — indistinguishable from the
+    #: service being down, and it sent debugging after the wrong thing twice.
+    #:
+    #: So development matches loopback and RFC1918 private ranges on any port.
+    #: This is deliberately permissive and deliberately *dev-only*: the routes
+    #: carry a bearer token rather than a cookie, so a matching origin still
+    #: proves nothing and grants nothing, and the service binds to 127.0.0.1 by
+    #: default. A deployment sets JUNIPER_CORS_ORIGINS to its real origins and
+    #: JUNIPER_CORS_ORIGIN_REGEX="" to switch this off.
+    cors_origin_regex: str | None = (
+        r"http://(localhost|127\.0\.0\.1|\[::1\]"
+        r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+        r"|192\.168\.\d{1,3}\.\d{1,3}"
+        r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?"
+    )
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -171,6 +193,11 @@ class Settings:
                 "JUNIPER_DEEPGRAM_LISTEN_MODEL", default.deepgram_listen_model
             ),
             cors_origins=_origins(env.get("JUNIPER_CORS_ORIGINS"), default.cors_origins),
+            cors_origin_regex=(
+                env["JUNIPER_CORS_ORIGIN_REGEX"] or None
+                if "JUNIPER_CORS_ORIGIN_REGEX" in env
+                else default.cors_origin_regex
+            ),
             deepgram_speak_model=env.get(
                 "JUNIPER_DEEPGRAM_SPEAK_MODEL", default.deepgram_speak_model
             ),
