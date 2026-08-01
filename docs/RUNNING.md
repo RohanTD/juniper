@@ -151,11 +151,18 @@ placeholder value here means every note the service writes gets an `author`/
 
 - **Attach the voice-service AccessPolicy.** The real `Juniper Voice Service`
   ClientApplication now exists, but its `ProjectMembership` has no AccessPolicy bound
-  yet, so it still has the bootstrap client's full access. In the Medplum app, bind
+  yet, so it still has unrestricted project access. In the Medplum app, bind
   "Juniper Voice Service Policy" to its membership — this is what makes the narrow
   write surface (`Encounter`/`Binary`/`DocumentReference`/`Task` only) real rather than
   merely intended. Then set `MEDPLUM_CLIENT_ID`/`MEDPLUM_CLIENT_SECRET` in
   `services/voice/.env` to *this* client's id and secret, not the bootstrap one.
+
+  This step is **console-only**: `ProjectMembership` is not reachable via
+  client-credentials tokens at all (even an unrestricted client gets `403 Forbidden`
+  on `GET /ProjectMembership`), so no script can do it for you. Until it's done, the
+  "write-scope test" in `docs/PLAN.md` is unenforced — the service *behaves* correctly
+  because the code only writes those four types, but nothing on the server would stop
+  it writing more.
 - **Create a public/PKCE client for the apps.** `apply.sh` does not create this —
   `apps/onboarding` and `apps/family` sign in as a human (patient/proxy or caregiver),
   not as a service, so they need a browser/native OAuth client with a redirect URI
