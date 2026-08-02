@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from dataclasses import dataclass, field, replace
@@ -49,6 +50,24 @@ from .terminology import Terminology
 from .transcript import COMPANION, PATIENT, SYSTEM, TranscriptBuffer
 
 logger = logging.getLogger("juniper.controller")
+
+
+_WORD_RE = re.compile(r"[a-z0-9']+")
+
+
+def _content_tokens(text: str) -> list[str]:
+    """Lowercased word tokens, punctuation discarded — STT revisions re-decode
+    punctuation freely, so it carries no signal about turn identity."""
+    return _WORD_RE.findall(text.lower())
+
+
+def _common_prefix_len(a: list[str], b: list[str]) -> int:
+    n = 0
+    for x, y in zip(a, b):
+        if x != y:
+            break
+        n += 1
+    return n
 
 # Deterministic last resort when a rewrite still violates a hard prohibition:
 # a bland utterance is strictly safer than one that breaks a negative
@@ -319,25 +338,55 @@ class ConversationController:
         Flux emits an end-of-turn and can then emit a corrected version of the
         same words. Both reach this stateless endpoint as full turns, so the
         agent composed and spoke two replies back to back with no patient turn
-        between them — visible at the top of every recorded call. A revision is
-        recognised by shape: it arrives within a few seconds and one text is a
-        prefix of the other ("I'm doing good. How" -> "I'm doing good. How are
-        you?"), or the two are identical.
+        between them.
+
+        The first version of this check required one string to be a prefix of
+        the other. A real call showed that is not what revisions look like:
+        Flux also re-punctuates the boundary ("...my daughter," ->
+        "...my daughter. be being") and RE-DECODES the tail ("be being" ->
+        "be doing"), so the prefix test failed on almost every actual revision.
+        The agent then answered each revision as a fresh turn — three
+        medication questions back to back — told the patient "I'm noticing
+        you're repeating some of the same words", and the post-call pass wrote
+        a family summary describing word-finding difficulty. The system
+        diagnosed its own transcription bug as the patient's cognitive symptom,
+        which is the single worst failure this product can produce.
+
+        So the comparison is now over content tokens (case- and
+        punctuation-insensitive), and a revision is recognised when the two
+        texts share their opening and differ only at the tail:
+
+        - pure extension of the prior text (the classic revision), or
+        - the same opening with the last word or two of the prior re-decoded.
+
+        The cost asymmetry decides the close calls. Wrongly treating a new
+        turn as a revision replays one reply; wrongly treating a revision as a
+        new turn machine-guns questions and fabricates a symptom in the
+        medical record.
         """
         previous = self._last_patient_text
         if previous is None:
             return False
         if self.clock() - self._last_patient_at > self.settings.dedup_window_seconds:
             return False
-        current = " ".join(patient_text.lower().split())
-        prior = " ".join(previous.lower().split())
+        current = _content_tokens(patient_text)
+        prior = _content_tokens(previous)
         if not current or not prior or current == prior:
             # An IDENTICAL repeat is left alone deliberately. A patient who
             # says "fine" and then "fine" again is talking to us and deserves
-            # an answer; the observed STT fault is a strict extension of a
-            # truncated turn, which is what this narrows to.
+            # an answer.
             return False
-        return current.startswith(prior) or prior.startswith(current)
+        common = _common_prefix_len(prior, current)
+        prior_tail = len(prior) - common
+        if prior_tail == 0:
+            # Everything the patient had said is still there, extended.
+            return len(current) > len(prior)
+        # Tail rewrite: the shared opening must be substantial (three tokens —
+        # "yes" vs "yes I am" style confirmations stay answerable), and only
+        # the end of the prior text may have been re-decoded: two tokens when
+        # the utterance grew, one when it merely changed.
+        allowed_tail = 2 if len(current) > len(prior) else 1
+        return common >= 3 and prior_tail <= allowed_tail
 
     async def _gatekeeper_turn(self, patient_text: str, timer: TurnTimer) -> str:
         # Urgency starts first — scripted turn or not, every patient utterance

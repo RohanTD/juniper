@@ -86,6 +86,19 @@ class EscalationSink:
         actions_taken: tuple[str, ...] = (),
     ) -> Escalation:
         """Record and notify immediately — never waiting on the post-call pass."""
+        for prior in self._escalations:
+            if prior.category == category:
+                # One Task per concern per call. The 19:24 call produced two
+                # Tasks seventeen seconds apart for the same episode of
+                # distress — a caregiver opens the dashboard to two urgent
+                # alerts about one moment, and duplicate alarms are how real
+                # ones get ignored. The first recording already fired the
+                # notifier; the note carries the full context.
+                logger.info(
+                    "escalation for category=%s already recorded this call; not duplicating",
+                    category,
+                )
+                return prior
         noted_at = datetime.fromtimestamp(self._clock(), tz=timezone.utc).isoformat()
         escalation = Escalation(
             call_id=call_id,

@@ -189,3 +189,69 @@ async def test_only_the_topic_actually_pursued_spends_its_budget(provider, make_
 
     spent = {d: s.turns_since_progress for d, s in controller.coverage.items()}
     assert sum(spent.values()) == 1, f"exactly one topic was asked about: {spent}"
+
+
+async def test_repunctuated_and_redecoded_revisions_are_still_revisions(provider, make_controller):
+    """The prefix-only matcher failed on what Flux actually emits.
+
+    These lines are verbatim from a recorded call (2026-08-02, Peggy). The
+    boundary re-punctuates ("daughter," -> "daughter. be being") and the tail
+    re-decodes ("be being" -> "be doing"), so a strict prefix test saw six new
+    turns in one utterance. The agent answered several of them — three
+    medication questions back to back — then said "I'm noticing you're
+    repeating some of the same words", and the family summary reported
+    word-finding difficulty. The transcription bug was documented as the
+    patient's cognitive symptom.
+    """
+    _script(provider)
+    controller = make_controller(settings=ControllerSettings(warmup_turns=2))
+    controller.phase = Phase.MAIN
+
+    revisions = [
+        "spending time with my daughter,",
+        "spending time with my daughter. be being",
+        "spending time with my daughter. be doing",
+        "spending time with my daughter. It's like a yes from",
+        "spending time with my daughter. It's like a yes sometimes.",
+    ]
+    first = await controller.take_turn(revisions[0])
+    for text in revisions[1:]:
+        assert await controller.take_turn(text) == first, f"not treated as revision: {text!r}"
+
+    patient_lines = [e for e in controller.transcript.entries if e.speaker == PATIENT]
+    assert len(patient_lines) == 1, "one utterance, one line on the record"
+    assert patient_lines[0].text == revisions[-1], "the record keeps the final decoding"
+    assert len(provider.requests_for("companion")) == 1, "and the companion composed once"
+
+
+async def test_a_different_sentence_with_a_shared_opening_is_a_new_turn(provider, make_controller):
+    """The guard must not swallow a genuinely new thought. "I went to the
+    park" followed by "I went to bed early" shares three tokens but the prior
+    tail is two words — outside the one-word re-decode allowance — so it gets
+    its own reply."""
+    _script(provider)
+    controller = make_controller(settings=ControllerSettings(warmup_turns=2))
+    controller.phase = Phase.MAIN
+
+    await controller.take_turn("I went to the park")
+    await controller.take_turn("I went to bed early")
+
+    patient_lines = [e for e in controller.transcript.entries if e.speaker == PATIENT]
+    assert len(patient_lines) == 2
+    assert len(provider.requests_for("companion")) == 2
+
+
+async def test_short_confirmations_are_never_merged(provider, make_controller):
+    """"yes" then "yes I am" is a pure extension and replays; but "no" then
+    "no wait yes" flips meaning past the extension shape and must be answered.
+    The three-token floor keeps tiny utterances from being over-merged by the
+    tail-rewrite rule."""
+    _script(provider)
+    controller = make_controller(settings=ControllerSettings(warmup_turns=2))
+    controller.phase = Phase.MAIN
+
+    await controller.take_turn("no still hurting")
+    await controller.take_turn("no better today")  # shared "no", tails differ
+
+    patient_lines = [e for e in controller.transcript.entries if e.speaker == PATIENT]
+    assert len(patient_lines) == 2, "shared one-token opening is not a revision"

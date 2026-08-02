@@ -92,3 +92,29 @@ async def test_urgency_trips_forces_companion_and_escalates_before_post_call(
         organization_ref="Organization/juniper-pilot-clinic",
     )
     assert events.index("care_team_notified") < events.index("post_call_note_generated")
+
+
+async def test_one_task_per_category_per_call(provider):
+    """A live call produced two urgent Tasks seventeen seconds apart for one
+    episode of distress. A caregiver opening the dashboard to duplicate alarms
+    about a single moment is how the real one gets ignored — one concern, one
+    Task, and the note carries the detail."""
+    from juniper_voice.escalation import EscalationSink
+
+    sink = EscalationSink(clock=lambda: 0.0)
+    first = sink.record(
+        call_id="call-1", patient_id="pat-1", category="self-harm",
+        summary="expressed distress", utterance="I don't want to be here",
+    )
+    second = sink.record(
+        call_id="call-1", patient_id="pat-1", category="self-harm",
+        summary="expressed distress again", utterance="I still feel that way",
+    )
+    other = sink.record(
+        call_id="call-1", patient_id="pat-1", category="fall",
+        summary="reported a fall", utterance="I fell this morning",
+    )
+
+    assert second is first, "same category merges into the existing escalation"
+    assert other is not first, "a different concern still gets its own"
+    assert len(sink.escalations) == 2

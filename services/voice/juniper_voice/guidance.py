@@ -442,9 +442,10 @@ async def generate_guidance(
         # whole call notes, and the reply is structured JSON — truncation lands
         # mid-object, the parse fails, and the caregiver is told Juniper
         # "couldn't put suggestions together", which is true but describes a
-        # budget rather than the model having nothing to say. The documentation
-        # pass on the same input is given 4000 for the same reason.
-        max_tokens=2000,
+        # budget rather than the model having nothing to say. A real run at
+        # 2000 came back at 1994 tokens — still riding the ceiling — so the
+        # budget matches the documentation pass on the same input.
+        max_tokens=4000,
     )
     payload = _parse_payload(response.text)
     if payload is None:

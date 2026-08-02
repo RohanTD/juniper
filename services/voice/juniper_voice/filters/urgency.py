@@ -30,6 +30,14 @@ Respond with STRICT JSON only:
  "summary": "<one factual sentence describing the concern>",
  "directive": "<the concrete clinical direction the companion must give, e.g. 'call your doctor today about the chest pain'>"}
 
+Do NOT mark urgent:
+- the patient complaining about, describing, or quoting this call itself ("why do you keep
+  asking", "it's asking me if I'm ending my life") — that is commentary on the conversation,
+  not a report of their own state
+- sadness, loneliness or frustration alone, with no danger sign and no thought of self-harm —
+  low mood belongs in the visit note, not an urgent alert
+Over-alerting is its own harm: it teaches the family to ignore the alert that matters.
+
 If nothing is urgent: {"urgent": false, "category": "other", "summary": "", "directive": ""}."""
 
 # Deterministic backstop used only when the model call itself fails: a broken

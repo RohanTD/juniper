@@ -52,6 +52,13 @@ Mobility. Capture every clinically relevant finding the patient reported, includ
 mentioned only in passing. Include distressing findings when clinically necessary — this
 note is for clinicians. Note urgent concerns and that they were escalated. Be factual and
 concise; hedge explicitly where the patient's answer was ambiguous. Do not invent findings.
+
+The transcript is machine speech-to-text. Truncated fragments, near-duplicate lines, and
+lines that repeat with small wording changes are usually TRANSCRIPTION artifacts, not the
+patient's manner of speaking. Do not describe repetition, disfluency, or word-finding
+difficulty as an observation about the patient unless it is unmistakable across several
+clearly distinct exchanges — a transcription bug reported as a cognitive symptom is a
+serious documentation error.
 Plain text only."""
 
 _FAMILY_SYSTEM = """You are writing a short update for the family caregiver of an elderly patient,
@@ -64,7 +71,11 @@ based on the COMPLETE transcript of today's Juniper check-in call. Rules:
   about it, so it informs rather than alarms.
 - This is a different document for a different reader, not a softened clinical note. Focus
   on how the visit went, how their loved one seemed, and anything the family should know
-  or do. A few short paragraphs, plain text only."""
+  or do. A few short paragraphs, plain text only.
+- The transcript is machine speech-to-text: truncated fragments and near-duplicate lines
+  are usually transcription artifacts. NEVER tell a family their loved one had trouble
+  speaking, repeated themselves, or seemed confused on the strength of such lines alone —
+  a transcription bug reported as a symptom causes a family real fear."""
 
 
 @dataclass(frozen=True)
