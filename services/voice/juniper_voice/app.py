@@ -25,6 +25,7 @@ import hmac
 import json
 import logging
 import time
+from xml.sax.saxutils import escape
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
@@ -35,7 +36,7 @@ from fastapi.responses import JSONResponse, Response
 
 from . import llm_endpoint
 from .acknowledgements import AlertAcknowledgements, AlertAcknowledgementStore
-from .agents.gatekeeper import scripted_greeting
+from .agents.gatekeeper import VOICEMAIL_MESSAGE, scripted_greeting
 from .config import Settings
 from .context_brain import ContextBrain
 from .controller import ControllerSettings, ConversationController, Phase
@@ -86,11 +87,22 @@ def build_deepgram_settings(
         # {name}?") replaces what used to be a 3-6s silent gap while the
         # gatekeeper LLM composed a greeting after the patient said hello.
         agent["greeting"] = greeting
+    # Flux is a v2 model and is the only listen model exposing end-of-turn
+    # tuning; nova-3 takes neither the version flag nor the EOT params.
+    # Verified live: the EOT values must be NUMBERS here — sending them as
+    # strings (the shape Deepgram's Configure-message docs show) is rejected
+    # with "Error parsing client message".
+    listen_provider: dict[str, Any] = {
+        "type": "deepgram",
+        "model": settings.deepgram_listen_model,
+    }
+    if settings.deepgram_listen_model.startswith("flux"):
+        listen_provider["version"] = "v2"
+        listen_provider["eot_threshold"] = settings.deepgram_eot_threshold
+        listen_provider["eot_timeout_ms"] = settings.deepgram_eot_timeout_ms
     agent.update(
         {
-            "listen": {
-                "provider": {"type": "deepgram", "model": settings.deepgram_listen_model}
-            },
+            "listen": {"provider": listen_provider},
             "think": {
                 # "open_ai" designates any OpenAI-compatible endpoint — our
                 # FastAPI service is the gateway; the model name is cosmetic.
@@ -573,6 +585,81 @@ def create_app(
         task.add_done_callback(app.state.post_call_tasks.discard)
 
     # -- Twilio voice webhook ------------------------------------------------
+    @app.post("/twilio/amd")
+    async def twilio_amd(request: Request):
+        """Answering-machine detection callback.
+
+        Requested ASYNCHRONOUSLY (AsyncAmd=true) so a human answering pays no
+        detection latency — the greeting still plays immediately. When Twilio
+        decides a machine picked up, it calls here and we redirect the live
+        call to a fixed <Say> + <Hangup>. The Deepgram agent session and every
+        LLM on the turn loop are abandoned at that point, which is the whole
+        objective: a missed call should cost one TTS render, not a
+        conversation with a voicemail menu.
+        """
+        form = await request.form()
+        params = {key: str(value) for key, value in form.items()}
+        if settings.twilio_auth_token:
+            signature = request.headers.get("x-twilio-signature", "")
+            if not validate_twilio_signature(
+                str(request.url), params, signature, settings.twilio_auth_token
+            ):
+                raise HTTPException(status_code=403, detail="bad Twilio signature")
+        call_sid = params.get("CallSid", "")
+        answered_by = params.get("AnsweredBy", "unknown")
+        logger.info("amd result for %s: %s", call_sid, answered_by)
+        # "human" needs no action; the call is already running normally.
+        # "unknown" is deliberately treated as human — cutting off a real
+        # patient is far worse than talking briefly to a machine.
+        if not answered_by.startswith("machine") or not call_sid:
+            return Response(status_code=204)
+        controller = registry.get(call_sid)
+        if controller is not None and controller.patient_engaged:
+            # A person is demonstrably on the line — they got through the
+            # gatekeeper. Detection is probabilistic and it DOES misfire: a
+            # false "machine_end_other" 26s into a live call played the
+            # voicemail message at a real patient mid-conversation and hung up
+            # on them. Once someone has actually engaged, AMD loses its vote.
+            logger.warning(
+                "ignoring AMD '%s' on %s: patient already engaged", answered_by, call_sid
+            )
+            return Response(status_code=204)
+        if controller is not None:
+            # Belt and braces: even if the redirect races the turn loop, the
+            # post-call pass must not treat this as a clinical encounter.
+            controller.patient_engaged = False
+            controller.phase = Phase.DONE
+            controller.hangup_requested = True
+        await _leave_voicemail(call_sid)
+        return Response(status_code=204)
+
+    async def _leave_voicemail(call_sid: str) -> None:
+        """Redirect a live call to a fixed spoken message, then hang up."""
+        if not (settings.twilio_account_sid and settings.twilio_auth_token):
+            logger.warning("cannot leave voicemail for %s: Twilio creds unset", call_sid)
+            return
+        twiml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f"<Response><Say>{escape(VOICEMAIL_MESSAGE)}</Say><Hangup/></Response>"
+        )
+        url = (
+            f"https://api.twilio.com/2010-04-01/Accounts/"
+            f"{settings.twilio_account_sid}/Calls/{call_sid}.json"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http:
+                response = await http.post(
+                    url,
+                    data={"Twiml": twiml},
+                    auth=(settings.twilio_account_sid, settings.twilio_auth_token),
+                )
+            if response.status_code >= 400:
+                logger.error("voicemail redirect failed for %s: %s", call_sid, response.text[:200])
+            else:
+                logger.info("left pre-written voicemail on %s", call_sid)
+        except Exception:  # noqa: BLE001
+            logger.exception("voicemail redirect errored for %s", call_sid)
+
     @app.post("/twilio/voice")
     async def twilio_voice(request: Request):
         form = await request.form()
@@ -694,13 +781,28 @@ def create_app(
                         except (TypeError, json.JSONDecodeError):
                             continue
                         event_type = event.get("type")
+                        # Every non-audio event is logged. Without this the
+                        # bridge was a black box: a call where the patient kept
+                        # saying "Hello?" and their turns arrived chopped
+                        # mid-word ("Hello? Can you", "I'm gonna be") left no
+                        # trace of WHY — whether barge-in was flushing the
+                        # agent's audio, whether the speak model was rejected,
+                        # or whether turn detection was firing early. These
+                        # events are a handful per turn; the audio frames
+                        # (bytes) are already handled above and never logged.
+                        if event_type == "Error":
+                            logger.error("Deepgram agent error: %s", event)
+                        elif event_type != "LatencyReport":
+                            # LatencyReport fires per audio chunk (dozens per
+                            # second) and drowns everything else; the turn
+                            # timings we care about are already measured on our
+                            # own side by LatencyLog.
+                            logger.info("deepgram event %s: %s", event_type, json.dumps(event)[:400])
                         if event_type == "UserStartedSpeaking" and stream_sid is not None:
                             # Barge-in: flush Twilio's audio buffer immediately.
                             await websocket.send_text(
                                 json.dumps({"event": "clear", "streamSid": stream_sid})
                             )
-                        elif event_type == "Error":
-                            logger.error("Deepgram agent error: %s", event)
 
                 pumps = [
                     asyncio.create_task(pump_twilio_to_deepgram()),

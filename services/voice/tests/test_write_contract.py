@@ -246,3 +246,51 @@ async def test_no_family_pair_is_written_when_the_summary_is_absent(medplum, ter
 )
 def test_describe_when_reads_as_prose(iso, expected):
     assert describe_when(iso) == expected
+
+
+async def test_voicemail_writes_nothing_to_the_chart(medplum, terminology, provider):
+    """A contact attempt is not a clinical encounter.
+
+    Observed live: a call that reached voicemail still produced an Encounter,
+    a clinical note, a raw transcript AND a family summary — seven FHIR
+    resources plus ~2,900 Opus tokens for a conversation that never happened.
+    The family summary is the worst of it: a caregiver could open a document
+    describing a visit that did not occur.
+    """
+    from juniper_voice.controller import ConversationController, Phase
+    from juniper_voice.documentation import run_post_call
+    from juniper_voice.escalation import EscalationSink
+    from juniper_voice.llm.provider import ModelRoster
+    from juniper_voice.medplum import EHRBrief, ConsentStatus
+    from juniper_voice.preferences import PreferencesStore
+    import tempfile, os
+
+    brief = EHRBrief(
+        text="chart", patient_id="pat-1", patient_name="Margaret Alvarez",
+        preferred_name="Peggy", language="en", phone="+15555550100",
+        consent=ConsentStatus(ai_calling=True, recording=True, family_sharing=True),
+        care_team=(), prior_notes=(), token_estimate=10,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        controller = ConversationController(
+            call_id="CAvoicemail", patient_id="pat-1", provider=provider,
+            roster=ModelRoster(), terminology=terminology, brief=brief,
+            digest="", negative_constraints=(),
+            preferences=PreferencesStore(os.path.join(tmp, "p.json")),
+            escalation=EscalationSink(),
+            # A real voicemail call never leaves the gatekeeper phase.
+            start_phase=Phase.GATEKEEPER,
+        )
+        assert controller.patient_engaged is False
+
+        result = await run_post_call(
+            controller=controller, provider=provider, roster=ModelRoster(),
+            medplum=medplum, terminology=terminology,
+            device_ref=DEVICE_REF, organization_ref=ORG_REF,
+        )
+
+    # Nothing generated, and nothing written — not even the Encounter.
+    assert result.write_result is None
+    assert result.note_text == ""
+    assert result.family_summary_text is None
+    assert medplum.writes == [], f"voicemail wrote to the chart: {medplum.writes}"

@@ -23,7 +23,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Callable, Mapping, Sequence
 
@@ -35,7 +35,7 @@ from .agents.gatekeeper import (
     CONFIRMED_REPLY,
     Gatekeeper,
     GatekeeperOutcome,
-    is_clear_identity_yes,
+    is_cooperative_answer,
 )
 from .escalation import EscalationSink
 from .filters.compassion import CompassionFilter
@@ -53,7 +53,7 @@ logger = logging.getLogger("juniper.controller")
 # Deterministic last resort when a rewrite still violates a hard prohibition:
 # a bland utterance is strictly safer than one that breaks a negative
 # constraint or stays condescending.
-SAFE_FALLBACK_UTTERANCE = "Mm-hm — tell me more about how the rest of your week has been."
+SAFE_FALLBACK_UTTERANCE = "I'm listening — go on."
 
 
 class Phase(str, Enum):
@@ -75,11 +75,42 @@ class SlotState:
 @dataclass(frozen=True)
 class ControllerSettings:
     fourm_refresh_every: int = 3  # slow-loop cadence, in turns
-    escalate_after_turns: int = 4  # N turns without progress => REQUIRED intent
+    # Escalation now fires EARLIER than it used to (was 4), because a ceiling
+    # exists above it (max_asks_per_domain). The intended sequence per topic
+    # is: ask normally -> ask firmly (escalated) -> give up. With the old
+    # value of 4 the ceiling of 3 would be hit first and the teeth would never
+    # bite at all.
+    escalate_after_turns: int = 1  # N turns without progress => REQUIRED intent
+    # Turns of ordinary conversation before ANY clinical intent is issued.
+    # The controller simply withholds the advisory; the Companion is never
+    # told to pursue a domain, so it cannot pivot to one. Putting this in the
+    # persona instead would mean handing over "pursue Medication" while also
+    # saying "don't be clinical yet" — and an explicit turn instruction beats
+    # persona guidance every time (measured: that contradiction is what
+    # produced "That's nice that Maya called, Peggy, now about those
+    # medications...").
+    warmup_turns: int = 2
+    # Hard ceiling on how many unproductive turns a single 4M domain may
+    # consume before it is abandoned. Two questions is the aim, three the
+    # outside. Note this is a ceiling on turns WITHOUT PROGRESS: a productive
+    # answer resets the counter (mark_domain_complete), so a patient who is
+    # actually engaging is never cut off by it.
+    #
+    # Abandoning is not silent — _with_escalation has already recorded an
+    # UnansweredAsk, which reaches the gap manifest and the note as "not
+    # assessed". PLAN.md: grinding through every gap produces a worse call AND
+    # worse data than accepting an unfilled slot.
+    max_asks_per_domain: int = 3
     max_call_seconds: float = 720.0
     closing_turn_budget: int = 3
     fatigue_short_replies: int = 3  # consecutive short replies => fatigue
     fatigue_word_threshold: int = 4
+    # Window in which a repeated or extended utterance is treated as the STT
+    # revising its own turn rather than the patient speaking again. Flux emits
+    # an end-of-turn and then, occasionally, a corrected version of the same
+    # words; both arrive as full turns on a stateless endpoint, so the agent
+    # answered twice and talked over itself at the top of every call.
+    dedup_window_seconds: float = 5.0
     max_rewrites: int = 2
     transcript_window: int = 12
     confidence_threshold: float = 0.6
@@ -197,12 +228,36 @@ class ConversationController:
         # period.start == "1970-02-05...").
         self._call_started_at_wall = datetime.now(timezone.utc)
         self._turn_index = 0
+        # Conversation turns only (the gatekeeper's identity turns don't count):
+        # what warmup_turns is measured against.
+        self._main_turns = 0
+        # The 4M domain this turn's advisory actually pursued, if any — the
+        # only domain whose question budget the turn is allowed to spend.
+        self._pursued_domain: str | None = None
+        self._last_patient_text: str | None = None
+        self._last_patient_at: float = float("-inf")
+        # The last thing actually said, replayed verbatim if the STT revises
+        # the turn it answered (see _is_stt_revision).
+        self._last_reply: str = ""
+        # The first clinical advisory of the call gets a gentler, three-beat
+        # framing (acknowledge -> turn tentatively -> invite). Once only.
+        self._opening_advisory_issued = False
         self._gatekeeper_attempts = 0
         self._closing_turns_used = 0
         self._closing_reason: str | None = None
         self._consecutive_short_replies = 0
         self._background: set[asyncio.Task] = set()
         self.hangup_requested = False
+        # True only once a real person is on the line and the conversation
+        # proper has begun. A voicemail system, a wrong number, or a refusal
+        # never sets it — and the post-call pass refuses to write a clinical
+        # note, a family summary, or even an Encounter without it. A missed
+        # call is not a clinical event, and a caregiver must never open a
+        # "family summary" describing a conversation that did not happen.
+        # Starting anywhere past the gatekeeper means a person is already on
+        # the line — only a call that must still identify who answered begins
+        # unengaged.
+        self.patient_engaged = start_phase is not Phase.GATEKEEPER
         self.urgency_turns: list[int] = []
 
     # ------------------------------------------------------------------
@@ -214,7 +269,25 @@ class ConversationController:
         cleanly: in-flight subtasks are cancelled and the transcript stays
         consistent."""
         if self.phase is Phase.DONE:
-            return "Take good care — goodbye now."
+            return "Take care of yourself. I'll talk to you next time."
+        if self._is_stt_revision(patient_text):
+            # Same utterance, revised by the STT. Correct the transcription on
+            # the record and REPLAY the reply that turn already produced.
+            #
+            # Replaying rather than returning "" is the whole trick, and it was
+            # learned by breaking it: Deepgram issues a second request when the
+            # turn is revised and DISCARDS the response to the first. Answering
+            # the revision with silence therefore threw away the reply the
+            # patient was meant to hear — measured live as a 10s dead air after
+            # their first answer, at which point they asked "can you hear me?".
+            # Replaying makes both responses identical, so whichever one the
+            # agent speaks, the patient hears the utterance exactly once.
+            logger.info("replaying reply for revised turn: %r", patient_text[:60])
+            self.transcript.replace_last(PATIENT, patient_text)
+            self._last_patient_text = patient_text
+            return self._last_reply
+        self._last_patient_text = patient_text
+        self._last_patient_at = self.clock()
         self._turn_index += 1
         timer = self.latency.begin_turn(self._turn_index)
         with timer.stage("stt_finalize"):
@@ -223,8 +296,11 @@ class ConversationController:
             if self.phase is Phase.GATEKEEPER:
                 reply = await self._gatekeeper_turn(patient_text, timer)
             else:
+                if self.phase is Phase.MAIN:
+                    self._main_turns += 1
                 reply = await self._conversation_turn(patient_text, timer)
             self.transcript.append(COMPANION, reply)
+            self._last_reply = reply
         except asyncio.CancelledError:
             # Barge-in: the patient's words stay on the record; the aborted
             # reply is marked so documentation sees a consistent transcript.
@@ -237,6 +313,32 @@ class ConversationController:
         self._after_emit(patient_text, reply)
         return reply
 
+    def _is_stt_revision(self, patient_text: str) -> bool:
+        """Is this the same utterance again, rather than a new one?
+
+        Flux emits an end-of-turn and can then emit a corrected version of the
+        same words. Both reach this stateless endpoint as full turns, so the
+        agent composed and spoke two replies back to back with no patient turn
+        between them — visible at the top of every recorded call. A revision is
+        recognised by shape: it arrives within a few seconds and one text is a
+        prefix of the other ("I'm doing good. How" -> "I'm doing good. How are
+        you?"), or the two are identical.
+        """
+        previous = self._last_patient_text
+        if previous is None:
+            return False
+        if self.clock() - self._last_patient_at > self.settings.dedup_window_seconds:
+            return False
+        current = " ".join(patient_text.lower().split())
+        prior = " ".join(previous.lower().split())
+        if not current or not prior or current == prior:
+            # An IDENTICAL repeat is left alone deliberately. A patient who
+            # says "fine" and then "fine" again is talking to us and deserves
+            # an answer; the observed STT fault is a strict extension of a
+            # truncated turn, which is what this narrows to.
+            return False
+        return current.startswith(prior) or prior.startswith(current)
+
     async def _gatekeeper_turn(self, patient_text: str, timer: TurnTimer) -> str:
         # Urgency starts first — scripted turn or not, every patient utterance
         # is classified. It is the floor cost of the fast path, and that is
@@ -246,7 +348,7 @@ class ConversationController:
             if self.settings.urgency_filter_enabled
             else None
         )
-        if is_clear_identity_yes(patient_text):
+        if is_cooperative_answer(patient_text):
             # Scripted opening fast path: the greeting was spoken by
             # Deepgram's agent.greeting (zero LLM), the patient clearly
             # confirmed identity, and the scripted follow-up is a pre-vetted
@@ -263,6 +365,7 @@ class ConversationController:
                     if urgency_task is not None:
                         _cancel_pending(urgency_task)
             self.phase = Phase.MAIN
+            self.patient_engaged = True
             if concern.urgent:
                 # "Yes — but my chest hurts" style openings: the scripted
                 # reply is abandoned and the urgency path takes over whole.
@@ -319,6 +422,7 @@ class ConversationController:
             self.hangup_requested = True
         elif result.outcome is GatekeeperOutcome.PATIENT_CONFIRMED or urgency_fired:
             self.phase = Phase.MAIN
+            self.patient_engaged = True
         elif (
             result.outcome in (GatekeeperOutcome.FAMILY_MEMBER, GatekeeperOutcome.CONFUSED)
             and self._gatekeeper_attempts >= self.settings.gatekeeper_max_attempts
@@ -510,7 +614,39 @@ class ConversationController:
     # ------------------------------------------------------------------
     # Advisory selection + mechanical escalation
     # ------------------------------------------------------------------
+    # Controller-level advisory domains are not 4M codes and must not be
+    # rendered as "you still haven't heard about closing".
+    _CONTROL_DOMAIN_DISPLAY = {
+        "closing": "wrapping up warmly",
+    }
+
+    def _with_display(self, advisory: Advisory | None) -> Advisory | None:
+        """Attach the human-readable topic name, and mark the call's FIRST
+        clinical advisory so it can be phrased as an easing-in rather than a
+        topic change. The Companion is never told to pursue a raw slug."""
+        if advisory is None:
+            return advisory
+        opening = False
+        if not self._opening_advisory_issued and advisory.domain != "closing":
+            opening = True
+            self._opening_advisory_issued = True
+        if advisory.display and not opening:
+            return advisory
+        display = advisory.display or self._CONTROL_DOMAIN_DISPLAY.get(
+            advisory.domain, self._domain_display.get(advisory.domain, advisory.domain)
+        )
+        return replace(advisory, display=display, opening=opening)
+
     def _current_advisory(self) -> Advisory | None:
+        advisory = self._with_display(self._select_advisory())
+        # Remember which topic this turn actually pursued. The question budget
+        # is spent by _after_emit against THIS domain alone (see there).
+        self._pursued_domain = (
+            advisory.domain if advisory is not None and advisory.domain in self.coverage else None
+        )
+        return advisory
+
+    def _select_advisory(self) -> Advisory | None:
         if self.phase is Phase.CLOSING:
             # The final budgeted turn is always the recap-and-goodbye.
             if self._closing_turns_used >= self.settings.closing_turn_budget - 1:
@@ -528,9 +664,25 @@ class ConversationController:
                 hook="wind down gently",
                 source="controller",
             )
+        # Warm-up: hand over NO clinical intent for the opening turns, so the
+        # call starts as a conversation rather than an intake form.
+        if self._main_turns <= self.settings.warmup_turns:
+            return None
         advisory = self.standing_advisory
+        # A topic that has consumed its budget without producing anything is
+        # abandoned, standing advisory and all — that is what frees the
+        # Companion to follow whatever the patient actually wants to talk
+        # about. The miss is already on the record as an UnansweredAsk.
+        if advisory is not None and self._is_exhausted(advisory.domain):
+            logger.info(
+                "dropping '%s' after %d turns without progress; moving on",
+                advisory.domain,
+                self.settings.max_asks_per_domain,
+            )
+            self.standing_advisory = None
+            advisory = None
         if advisory is None:
-            unfilled = self._unfilled_domains()
+            unfilled = [d for d in self._unfilled_domains() if not self._is_exhausted(d)]
             if not unfilled:
                 return None
             advisory = Advisory(
@@ -540,6 +692,19 @@ class ConversationController:
         if escalated is not advisory:
             self.standing_advisory = escalated
         return escalated
+
+    def _is_exhausted(self, domain: str) -> bool:
+        """Has this topic used up its question budget without giving anything back?
+
+        Measured against turns WITHOUT PROGRESS, so a patient who is actually
+        answering never trips it — mark_domain_complete resets the counter.
+        """
+        slot = self.coverage.get(domain)
+        return (
+            slot is not None
+            and not slot.filled
+            and slot.turns_since_progress >= self.settings.max_asks_per_domain
+        )
 
     def _with_escalation(self, advisory: Advisory | None) -> Advisory | None:
         """Re-derive ``required`` from controller-owned slot state.
@@ -638,15 +803,24 @@ class ConversationController:
                 ),
                 name="session_append",
             )
-        if self.phase is Phase.MAIN:
-            active = self.standing_advisory.domain if self.standing_advisory else None
-            for code, slot in self.coverage.items():
-                if not slot.filled and (active is None or code == active):
-                    slot.turns_since_progress += 1
-        if len(patient_text.split()) < self.settings.fatigue_word_threshold:
-            self._consecutive_short_replies += 1
-        else:
-            self._consecutive_short_replies = 0
+        # A domain's question budget is spent ONLY when that domain was the one
+        # actually pursued this turn. Charging every unfilled domain — which is
+        # what happens whenever there is no advisory, i.e. every warm-up turn —
+        # exhausted all four before a single one had been raised, so the first
+        # mention of a topic arrived already escalated and was dropped one turn
+        # later. Budgets now measure asks, not elapsed turns.
+        if self.phase is Phase.MAIN and self._pursued_domain is not None:
+            slot = self.coverage.get(self._pursued_domain)
+            if slot is not None and not slot.filled:
+                slot.turns_since_progress += 1
+        # Fatigue is only meaningful once the call is actually underway. "Hello",
+        # "Yes", "I'm good" are ordinary phone openers, not tiredness — counting
+        # them ended real calls three turns in with "patient tired".
+        if self.phase is Phase.MAIN and self._main_turns > self.settings.warmup_turns:
+            if len(patient_text.split()) < self.settings.fatigue_word_threshold:
+                self._consecutive_short_replies += 1
+            else:
+                self._consecutive_short_replies = 0
         if self.phase is Phase.CLOSING:
             self._closing_turns_used += 1
         self._maybe_advance_phase()
